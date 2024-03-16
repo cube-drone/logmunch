@@ -1,3 +1,6 @@
+default:
+	cat Makefile
+
 unpack:
 	cp sample.log.gz sample.log.unpack.gz
 	gzip -df sample.log.unpack.gz
@@ -6,7 +9,7 @@ unpack:
 build:
 	docker build . -t log-gen
 
-run:
+start:
 	docker stop log-jennifer -t 1 || true
 	docker rm log-jennifer || true
 	docker run -d \
@@ -19,8 +22,11 @@ run:
 		--log-opt splunk-format=raw \
 		--log-opt env=HAMS_AHOY \
 		--log-opt env=HAMS_AHOY2 \
+		--log-opt env=LOG_FILE \
 		--env "HAMS_AHOY=PORKSWINDLE" \
 		--env "HAMS_AHOY2=SWINEFLESH" \
+		--env "LOG_FILE=quotes-and-curly-braces.log" \
+		--env "DELAY_MS=250" \
 		--label location=fatlanta \
 		log-gen
 

@@ -26,6 +26,7 @@ async function main(){
     let delayTime = parseInt(DELAY_MS);
 
     // read the log file wholly into memory
+    console.log(`reading log file: ${LOG_FILE}`);
     let log = fs.readFileSync(LOG_FILE, 'utf8');
     log = log.split('\n');
     let logLength = log.length;
