@@ -1,0 +1,15 @@
+{
+  "name": "test-http-echo",
+  "version": "1.0.0",
+  "description": "just... dump every http request to the console",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Curtis Lassam",
+  "license": "SSPL-1.0",
+  "dependencies": {
+    "body-parser": "^1.20.2",
+    "express": "^4.18.3"
+  }
+}

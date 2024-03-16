@@ -1,0 +1,11 @@
+{
+  "name": "test-log-generator",
+  "version": "1.0.0",
+  "description": "The test log generator's goal is to poop out logs at a fixed interval. It's, like, a sample application that we want to collect the logs from.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Curtis Lassam",
+  "license": "SSPL-1.0"
+}
