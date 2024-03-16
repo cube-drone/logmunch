@@ -25,7 +25,7 @@ start:
 		--log-opt env=LOG_FILE \
 		--env "HAMS_AHOY=PORKSWINDLE" \
 		--env "HAMS_AHOY2=SWINEFLESH" \
-		--env "LOG_FILE=quotes-and-curly-braces.log" \
+		--env "LOG_FILE=garbage.log" \
 		--env "DELAY_MS=250" \
 		--label location=fatlanta \
 		log-gen

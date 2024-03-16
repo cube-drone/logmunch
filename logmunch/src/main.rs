@@ -1,5 +1,6 @@
 #[macro_use] extern crate rocket;
 use std::sync::Arc;
+use std::time::SystemTime;
 use rocket::data::Data;
 use rocket::data::ToByteUnit;
 use rocket::State;
@@ -140,7 +141,11 @@ async fn rocket() -> _ {
     tokio::spawn(async move {
         loop {
             let event = services.receiver.recv().unwrap();
-            println!("{:?}", event);
+            let now = SystemTime::now();
+            let minute_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() / 60;
+            let hour_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() / 3600;
+            let day_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() / 86400;
+            println!("{}, {}, {}, {:?}", day_epoch, hour_epoch, minute_epoch, event);
         }
     });
 
