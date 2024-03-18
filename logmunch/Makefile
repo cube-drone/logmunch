@@ -9,3 +9,6 @@ start:
 
 test:
 	cargo test -- --nocapture
+
+hardtest:
+	cargo test --release -- --nocapture

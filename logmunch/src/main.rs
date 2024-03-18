@@ -9,6 +9,8 @@ use crossbeam::channel::unbounded;
 use crossbeam::channel::{Sender, Receiver};
 use rocket::tokio;
 
+mod minute;
+
 /*
 POST /services/collector/event/1.0 {}
 HEADERS:
@@ -64,6 +66,12 @@ struct WritableEvent{
     host: String
 }
 
+impl WritableEvent{
+    pub fn get_size_in_bytes(&self) -> usize {
+        self.event.len() + self.host.len() + 8
+    }
+}
+
 
 #[options("/services/collector/event/<version>")]
 fn ingest_options(version: f32) -> &'static str {
@@ -73,7 +81,6 @@ fn ingest_options(version: f32) -> &'static str {
 
 async fn do_something(services: &State<Services>, row: &str){
     // do something with row
-    println!("{}", row);
     let event = serde_json::from_str::<InputEvent>(row).unwrap();
     let time_microseconds = (event.time.parse::<f64>().unwrap() * 1000000.0) as i64;
     let writable_event = WritableEvent{
@@ -138,14 +145,52 @@ async fn rocket() -> _ {
     app = app.manage(services.clone());
     app = app.mount("/", routes![ingest_options, ingest]);
 
-    tokio::spawn(async move {
+    tokio::task::spawn_blocking(move || {
+        // this is the write thread and it's just gonna spin forever
+        let interval_us = 1000000;
+
         loop {
-            let event = services.receiver.recv().unwrap();
+            // start a timer
             let now = SystemTime::now();
-            let minute_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() / 60;
-            let hour_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() / 3600;
-            let day_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() / 86400;
-            println!("{}, {}, {}, {:?}", day_epoch, hour_epoch, minute_epoch, event);
+
+            // dump the entire receiver
+            let mut event_buffer: Vec<WritableEvent> = Vec::new();
+            let mut n_bytes = 0;
+            while let Ok(event) = services.receiver.try_recv() {
+                n_bytes += event.get_size_in_bytes();
+                event_buffer.push(event);
+            }
+            let n_events = event_buffer.len();
+
+            let mut symbol = "b";
+            if n_bytes > 1024 {
+                n_bytes = n_bytes / 1024;
+                symbol = "Kb";
+            }
+            if n_bytes > 1024 {
+                n_bytes = n_bytes / 1024;
+                symbol = "Mb";
+            }
+            if n_bytes > 1024 {
+                n_bytes = n_bytes / 1024;
+                symbol = "Gb";
+            }
+
+            // how long did that take?
+            let elapsed = now.elapsed().unwrap();
+            let elapsed_us = elapsed.as_micros() as i128;
+            let sleep_us = interval_us - elapsed_us;
+
+            println!("Received {} events ({}{}) in {} us", n_events, n_bytes, symbol, elapsed_us);
+
+            // if we took too long, just skip the sleep
+            if sleep_us < 0 {
+                println!("Warning: write thread took too long: {} us", elapsed_us);
+                continue;
+            }
+            else{
+                std::thread::sleep(std::time::Duration::from_micros(sleep_us as u64));
+            }
         }
     });
 
