@@ -4,12 +4,13 @@ use std::time::SystemTime;
 use rocket::data::Data;
 use rocket::data::ToByteUnit;
 use rocket::State;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::{Sender, Receiver};
 use rocket::tokio;
 
 mod minute;
+mod search_token;
 
 /*
 POST /services/collector/event/1.0 {}

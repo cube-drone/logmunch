@@ -3,6 +3,9 @@ use std::fs;
 use anyhow::Result;
 
 use fxhash::FxHashSet as HashSet;
+use growable_bloom_filter::GrowableBloom;
+use serde::{Serialize, Deserialize};
+use postcard;
 
 use rusqlite::{Connection as SqlConnection, DatabaseName, params, Transaction};
 
@@ -24,6 +27,9 @@ pub fn execute_and_eat_already_exists_errors(connection: &SqlConnection, sql: &s
 
 // MinuteWriter isn't intended to be passed around between threads, so it's not Sync, or Send, or nothin'
 struct MinuteWriter{
+    connection: SqlConnection,
+}
+struct MinuteReader{
     connection: SqlConnection,
 }
 
@@ -50,6 +56,19 @@ const INDEX_FRAGMENT: &str = r#"CREATE INDEX IF NOT EXISTS search_fragments_frag
 
 const INSERT_FRAGMENT: &str = r#"INSERT INTO search_fragments (id, fragment, min_log_id, max_log_id) VALUES (?, ?, ?, ?)"#;
 
+const GET_FRAGMENTS: &str = r#"SELECT DISTINCT fragment FROM search_fragments"#;
+
+const CREATE_BLOOM: &str = r#"CREATE TABLE IF NOT EXISTS bloom (
+    id INTEGER PRIMARY KEY,
+    bloom BLOB
+)"#;
+
+const INSERT_BLOOM: &str = r#"INSERT INTO bloom (id, bloom) VALUES (?, ?)"#;
+
+const GET_BLOOM: &str = r#"SELECT bloom FROM bloom ORDER BY id ASC LIMIT 1"#;
+
+const HAS_BLOOM: &str = r#"SELECT COUNT(*) FROM bloom"#;
+
 impl MinuteWriter{
     pub fn new(day: u32, hour: u32, minute: u32, unique_id: &str, data_directory: &str) -> Result<Self> {
 
@@ -69,6 +88,7 @@ impl MinuteWriter{
 
         execute_and_eat_already_exists_errors(&connection, CREATE_TABLE)?;
         execute_and_eat_already_exists_errors(&connection, CREATE_SEARCH_FRAGMENTS)?;
+        execute_and_eat_already_exists_errors(&connection, CREATE_BLOOM)?;
 
         Ok(MinuteWriter{
             connection,
@@ -79,7 +99,7 @@ impl MinuteWriter{
         // this hashset contains every word in the string
         // it also contains every 3-letter fragment of every word
         for word in data.split_whitespace() {
-            fragments.insert(word.to_string());
+            fragments.insert(word.to_string().to_lowercase());
 
             let mut vec = Vec::new();
             for char in word.chars() {
@@ -87,7 +107,8 @@ impl MinuteWriter{
                 let l =  vec.len();
                 if l > 2 {
                     // push the last 3 characters of the vec
-                    fragments.insert(vec[l-3..].iter().collect());
+                    let str: String = vec[l-3..].iter().collect();
+                    fragments.insert(str.to_lowercase());
                 }
             }
             for token in word.split("="){
@@ -141,18 +162,89 @@ impl MinuteWriter{
         Ok(())
     }
 
+    pub fn generate_bloom_filter(&mut self) -> Result<()> {
+        let mut statement = self.connection.prepare_cached(GET_FRAGMENTS)?;
+        let mut gbloom = GrowableBloom::new(0.01, 1000000);
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            let fragment: String = row.get(0)?;
+            gbloom.insert(fragment);
+        }
+
+        let postcard_serialized = postcard::to_allocvec(&gbloom)?;
+
+        let mut statement = self.connection.prepare_cached(INSERT_BLOOM)?;
+        let timestamp_micros = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as i64;
+        statement.execute(params![timestamp_micros, postcard_serialized])?;
+
+        Ok(())
+    }
+
     pub fn seal(&mut self) -> Result<()>{
-        // once we seal the minute, we can't write to it anymore
+        // once we seal the minute, we shouldn't write to it anymore
+        // (and why would we? it's in the past)
         self.connection.execute(INDEX_TIME, [])?;
         self.connection.execute(INDEX_HOST, [])?;
         self.connection.execute(INDEX_FRAGMENT, [])?;
+
+        // generate the bloooooooom
+        self.generate_bloom_filter()?;
+
         self.connection.execute("VACUUM", [])?;
 
         Ok(())
     }
+
+    pub fn is_sealed(&self) -> Result<bool> {
+        let mut statement = self.connection.prepare_cached(HAS_BLOOM)?;
+        let mut rows = statement.query([])?;
+        let count: i64 = rows.next()?.unwrap().get(0)?;
+        Ok(count > 0)
+    }
 }
 
-const MAX_WRITE_PER_SECOND_PER_THREAD: usize = 1001;
+impl MinuteReader{
+    pub fn new(day: u32, hour: u32, minute: u32, unique_id: &str, data_directory: &str) -> Result<Self> {
+
+        let fullpath = format!("{}/{}/{}", data_directory, day, hour);
+        let minutepath = format!("{}/{}/{}/{}-{}.db", data_directory, day, hour, minute, unique_id);
+
+        fs::create_dir_all(fullpath)?;
+
+        let connection = SqlConnection::open(minutepath)?;
+
+        Ok(MinuteReader{
+            connection,
+        })
+    }
+
+    pub fn get_bloom_filter(&self) -> Result<GrowableBloom> {
+        let mut statement = self.connection.prepare_cached(GET_BLOOM)?;
+        let mut rows = statement.query([])?;
+        let blob: Vec<u8> = rows.next()?.unwrap().get(0)?;
+        let bloom: GrowableBloom = postcard::from_bytes(&blob)?;
+        Ok(bloom)
+    }
+
+    pub fn search(&self, search_string: &str) -> Result<Vec<String>> {
+        // implement me
+        // meaningful tokens: AND OR NOT - ! && ||
+        // "these must be found together in order to count"
+        // "this this" that  => "this this" AND that
+        // -"this this" => NOT "this this"
+        // !"this this" => NOT "this this"
+        // \\ => "\"
+        // \!hi => "!hi"
+        // \-hi => "-hi"
+        // search syntax (thing) AND (thing) OR (thing) NOT (thing)
+        // can things be regexes? can they have wildcards?
+        // first we have to parse the search string into fragments
+
+        Ok(Vec::new())
+    }
+}
+
+const MAX_WRITE_PER_SECOND_PER_THREAD: usize = 3000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct WriteTicket{
@@ -257,9 +349,28 @@ impl ShardedMinuteWriter{
                     node.hours,
                     node.minutes,
                     &unique_id,
-                    "./test_data").unwrap();
+                    &self.data_directory).unwrap();
                 minute.seal()?;
             }
+        }
+        Ok(())
+    }
+
+    ///
+    /// (mostly for testing, I think?)
+    /// seal every minute
+    ///
+    pub fn force_seal(&mut self) -> Result<()> {
+        for node in &self.tickets {
+            let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs() as u32;
+            let unique_id = format!("{}-{}", node.machine_id, node.node_id);
+            let mut minute = MinuteWriter::new(
+                node.days,
+                node.hours,
+                node.minutes,
+                &unique_id,
+                &self.data_directory).unwrap();
+            minute.seal()?;
         }
         Ok(())
     }
@@ -271,6 +382,20 @@ impl ShardedMinuteWriter{
 fn generate_test_data() -> crate::WritableEvent {
     crate::WritableEvent{
         event: "prod-api-blue-gusher-37l master-build-2024-03-14-pogo-q-humslash notice: r=ggsc8rn0 - m=GET u=/api/1/worlds/wrld_5ef1f09c-a4dc-4fef-8cc1-45d9b82dbe00?apiKey=JlE5Jldo5Jibnk5O5hTx6XVqsJu4WJ26&organization=vrchat ip=240f:77:1cc0:1:29ff:87db:78e8:274f mac=e84e9e5dcad93e0a470b06dfeb1d5bd780965fac country=JP asn=2516 ja3=00000000000000000000000000000000 uA=VRC.Core.BestHTTP-Y platform=standalonewindows gsv=Release_1343 store=steam clientVersion=2024.1.1p2-1407--Release unityVersion=2022.3.6f1-DWR autok=b44d782088b32903 uId=usr_18698e31-bd1a-4aa6-b1a0-44cf9c51ab00 2fa=N lv=44 f=78 ms=4 s=200 route=/api/1/worlds/:id - TIME_OK".to_string(),
+        time: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as i64,
+        host: "localhost".to_string()
+    }
+}
+fn generate_needle() -> crate::WritableEvent {
+    crate::WritableEvent{
+        event: "haystack haystack haystack haystack haystack haystack needle haystack haystack haystack haystack".to_string(),
+        time: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as i64,
+        host: "localhost".to_string()
+    }
+}
+fn generate_haystack() -> crate::WritableEvent {
+    crate::WritableEvent{
+        event: "haystack haystack haystack haystack haystack haystack haystack haystack haystack".to_string(),
         time: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as i64,
         host: "localhost".to_string()
     }
@@ -303,10 +428,7 @@ fn test_explode_speed() -> Result<()> {
     }
 
     let elapsed = start.elapsed().unwrap();
-    let elapsed_us = elapsed.as_micros() as i128;
-    let elapsed_ms = elapsed.as_millis() as i128;
     let elapsed_s = elapsed.as_secs() as i128;
-    println!("Processed the same line 10000 times in {} us, {} ms, {} s", elapsed_us, elapsed_ms, elapsed_s);
     assert!(elapsed_s < 10);
     Ok(())
 }
@@ -319,6 +441,69 @@ fn test_explode_unicode() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_minute_writer() -> Result<()> {
+    let mut minute = MinuteWriter::new(
+        1,
+        2,
+        3,
+        "quick",
+        &"./test_data")?;
+
+    let mut test_data = Vec::new();
+    for _ in 0..1000 {
+        let data = generate_test_data();
+        test_data.push(data);
+    }
+    minute.write_second(test_data)?;
+
+    Ok(())
+}
+
+#[test]
+fn test_minute_reader() -> Result<()> {
+    let mut minute = MinuteWriter::new(
+        1,
+        2,
+        3,
+        "toast",
+        &"./test_data")?;
+
+    for i in 0..5{
+        let mut test_data = Vec::new();
+        for i in 0..1000 {
+            if i % 384 == 0 {
+                let data = generate_needle();
+                test_data.push(data);
+            } else {
+                let data = generate_haystack();
+                test_data.push(data);
+            }
+        }
+        minute.write_second(test_data)?;
+    }
+    minute.seal()?;
+
+    let reader = MinuteReader::new(
+        1,
+        2,
+        3,
+        "toast",
+        &"./test_data")?;
+
+    let bloom = reader.get_bloom_filter()?;
+    assert!(bloom.contains("haystack"));
+    assert!(bloom.contains("hay"));
+    assert!(bloom.contains("needle"));
+    assert!(bloom.contains("nee"));
+    assert!(bloom.contains("eed"));
+    assert!(bloom.contains("edl"));
+    assert!(bloom.contains("dle"));
+
+    Ok(())
+}
+
 
 #[test]
 fn test_minute() -> Result<()> {
@@ -334,7 +519,7 @@ fn test_minute() -> Result<()> {
     let mut bytes = 0;
     for _ in 0..60 {
         let mut test_data = Vec::new();
-        for _ in 0..7500 {
+        for _ in 0..5000 {
             let data = generate_test_data();
             count += 1;
             bytes += data.get_size_in_bytes();
@@ -349,6 +534,9 @@ fn test_minute() -> Result<()> {
     let elapsed_ms = elapsed.as_millis() as i128;
     let elapsed_s = elapsed.as_secs() as i128;
     println!("Wrote {} events ({} bytes, {}/sec) in {} us, {} ms, {} s", count, bytes, bytes/60, elapsed_us, elapsed_ms, elapsed_s);
+
+    // force seal the minute
+    minute.force_seal()?;
 
     Ok(())
 }
