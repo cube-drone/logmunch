@@ -1,4 +1,5 @@
 use anyhow::Result;
+use growable_bloom_filter::GrowableBloom;
 use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -188,6 +189,28 @@ impl SearchTree {
             },
             SearchTree::Or(left, right) => {
                 left.test(event) || right.test(event)
+            }
+        }
+    }
+
+    pub fn bloom_test(&self, filter: &GrowableBloom) -> bool {
+        match self {
+            SearchTree::None => true,
+            SearchTree::Token(token) => {
+                let mut trigrams = token.trigrams.clone();
+                for trigram in trigrams.iter() {
+                    if !filter.contains(trigram) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            SearchTree::Not(_tree) => true,
+            SearchTree::And(left, right) => {
+                left.bloom_test(filter) && right.bloom_test(filter)
+            },
+            SearchTree::Or(left, right) => {
+                left.bloom_test(filter) || right.bloom_test(filter)
             }
         }
     }
