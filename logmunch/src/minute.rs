@@ -135,6 +135,7 @@ impl Minute{
         for event in data {
             //self.bytes += event.get_size_in_bytes() as u32;
             Minute::explode(&mut fragments, &event.event);
+            fragments.insert(event.host.clone());
 
             last_id = (timestamp * 1000000) + sequence as i64;
             sequence += 1;
@@ -224,7 +225,7 @@ struct WriteTicket{
     node_id: u32,
 }
 
-struct ShardedMinute{
+pub struct ShardedMinute{
     tickets: HashSet<WriteTicket>,
     machine_id: u32,
     data_directory: String,
@@ -343,8 +344,6 @@ impl ShardedMinute{
         }
         Ok(())
     }
-
-
 }
 
 

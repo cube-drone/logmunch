@@ -149,6 +149,9 @@ async fn rocket() -> _ {
     tokio::task::spawn_blocking(move || {
         // this is the write thread and it's just gonna spin forever
         let interval_us = 1000000;
+        let machine_id = 1;
+        let data_directory = "./data/";
+        let mut minute_writer = minute::ShardedMinute::new(machine_id, data_directory.to_string());
 
         loop {
             // start a timer
@@ -162,6 +165,15 @@ async fn rocket() -> _ {
                 event_buffer.push(event);
             }
             let n_events = event_buffer.len();
+
+            // do something with the events
+            match minute_writer.write(event_buffer){
+                Ok(_) => {
+                },
+                Err(e) => {
+                    println!("Error writing events: {}", e);
+                }
+            }
 
             let mut symbol = "b";
             if n_bytes > 1024 {
