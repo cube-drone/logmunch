@@ -25,11 +25,8 @@ pub fn execute_and_eat_already_exists_errors(connection: &SqlConnection, sql: &s
     }
 }
 
-// MinuteWriter isn't intended to be passed around between threads, so it's not Sync, or Send, or nothin'
-struct MinuteWriter{
-    connection: SqlConnection,
-}
-struct MinuteReader{
+// Minute isn't intended to be passed around between threads, so it's not Sync, or Send, or nothin'
+struct Minute{
     connection: SqlConnection,
 }
 
@@ -69,7 +66,7 @@ const GET_BLOOM: &str = r#"SELECT bloom FROM bloom ORDER BY id ASC LIMIT 1"#;
 
 const HAS_BLOOM: &str = r#"SELECT COUNT(*) FROM bloom"#;
 
-impl MinuteWriter{
+impl Minute{
     pub fn new(day: u32, hour: u32, minute: u32, unique_id: &str, data_directory: &str) -> Result<Self> {
 
         let fullpath = format!("{}/{}/{}", data_directory, day, hour);
@@ -90,7 +87,7 @@ impl MinuteWriter{
         execute_and_eat_already_exists_errors(&connection, CREATE_SEARCH_FRAGMENTS)?;
         execute_and_eat_already_exists_errors(&connection, CREATE_BLOOM)?;
 
-        Ok(MinuteWriter{
+        Ok(Minute{
             connection,
         })
     }
@@ -137,7 +134,7 @@ impl MinuteWriter{
         // Lock the connection
         for event in data {
             //self.bytes += event.get_size_in_bytes() as u32;
-            MinuteWriter::explode(&mut fragments, &event.event);
+            Minute::explode(&mut fragments, &event.event);
 
             last_id = (timestamp * 1000000) + sequence as i64;
             sequence += 1;
@@ -201,22 +198,6 @@ impl MinuteWriter{
         let count: i64 = rows.next()?.unwrap().get(0)?;
         Ok(count > 0)
     }
-}
-
-impl MinuteReader{
-    pub fn new(day: u32, hour: u32, minute: u32, unique_id: &str, data_directory: &str) -> Result<Self> {
-
-        let fullpath = format!("{}/{}/{}", data_directory, day, hour);
-        let minutepath = format!("{}/{}/{}/{}-{}.db", data_directory, day, hour, minute, unique_id);
-
-        fs::create_dir_all(fullpath)?;
-
-        let connection = SqlConnection::open(minutepath)?;
-
-        Ok(MinuteReader{
-            connection,
-        })
-    }
 
     pub fn get_bloom_filter(&self) -> Result<GrowableBloom> {
         let mut statement = self.connection.prepare_cached(GET_BLOOM)?;
@@ -226,19 +207,7 @@ impl MinuteReader{
         Ok(bloom)
     }
 
-    pub fn search(&self, search_string: &str) -> Result<Vec<String>> {
-        // implement me
-        // meaningful tokens: AND OR NOT - ! && ||
-        // "these must be found together in order to count"
-        // "this this" that  => "this this" AND that
-        // -"this this" => NOT "this this"
-        // !"this this" => NOT "this this"
-        // \\ => "\"
-        // \!hi => "!hi"
-        // \-hi => "-hi"
-        // search syntax (thing) AND (thing) OR (thing) NOT (thing)
-        // can things be regexes? can they have wildcards?
-        // first we have to parse the search string into fragments
+    pub fn search(&self, search_string: &crate::search_token::SearchTree) -> Result<Vec<String>> {
 
         Ok(Vec::new())
     }
@@ -255,21 +224,21 @@ struct WriteTicket{
     node_id: u32,
 }
 
-struct ShardedMinuteWriter{
+struct ShardedMinute{
     tickets: HashSet<WriteTicket>,
     machine_id: u32,
     data_directory: String,
 }
 
-impl ShardedMinuteWriter{
-    pub fn new(machine_id: u32, data_directory: String) -> ShardedMinuteWriter {
+impl ShardedMinute{
+    pub fn new(machine_id: u32, data_directory: String) -> ShardedMinute {
         /*
             Note: we're storing WriteTickets in RAM, here, which means that if the server crashes, there's a good chance we'll
                 lose tickets and a bunch of minutes will be left unsealed.
             This is a problem, but it's not a problem we need to solve right now.
             It's a problem for _future curtis_.
          */
-        ShardedMinuteWriter{
+        ShardedMinute{
             tickets: HashSet::default(),
             machine_id: machine_id,
             data_directory,
@@ -307,7 +276,7 @@ impl ShardedMinuteWriter{
             let unique_id = format!("{}-{}", self.machine_id, n);
             let thread = std::thread::spawn(move || {
                 // each writer lives on its own thread
-                let mut minute = MinuteWriter::new(
+                let mut minute = Minute::new(
                     day, hour, minute, &unique_id, &data_directory).unwrap();
 
                 if split_data.len() > 0 {
@@ -344,7 +313,7 @@ impl ShardedMinuteWriter{
             if !(node.days == day && node.hours == hour && node.minutes == minute) {
                 // we should only seal the minute if it's not the current minute
                 let unique_id = format!("{}-{}", node.machine_id, node.node_id);
-                let mut minute = MinuteWriter::new(
+                let mut minute = Minute::new(
                     node.days,
                     node.hours,
                     node.minutes,
@@ -364,7 +333,7 @@ impl ShardedMinuteWriter{
         for node in &self.tickets {
             let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs() as u32;
             let unique_id = format!("{}-{}", node.machine_id, node.node_id);
-            let mut minute = MinuteWriter::new(
+            let mut minute = Minute::new(
                 node.days,
                 node.hours,
                 node.minutes,
@@ -379,13 +348,39 @@ impl ShardedMinuteWriter{
 }
 
 
-fn generate_test_data() -> crate::WritableEvent {
+struct TestData{
+    lines: Vec<String>,
+    i: usize,
+}
+
+impl TestData{
+    fn new() -> Self {
+        // open a file and read it into memory
+        // split it into lines
+        let contents = fs::read_to_string("../test-log-generator/sample.log").unwrap();
+        let lines = contents.split("\n").map(|x| x.to_string()).collect();
+
+        TestData{lines, i: 0}
+    }
+
+    fn next(&mut self) -> String {
+        let line = self.lines[self.i].clone();
+        self.i += 1;
+        if self.i >= self.lines.len() {
+            self.i = 0;
+        }
+        line
+    }
+}
+
+fn generate_test_data(data: &mut TestData) -> crate::WritableEvent {
     crate::WritableEvent{
-        event: "prod-api-blue-gusher-37l master-build-2024-03-14-pogo-q-humslash notice: r=ggsc8rn0 - m=GET u=/api/1/worlds/wrld_5ef1f09c-a4dc-4fef-8cc1-45d9b82dbe00?apiKey=JlE5Jldo5Jibnk5O5hTx6XVqsJu4WJ26&organization=vrchat ip=240f:77:1cc0:1:29ff:87db:78e8:274f mac=e84e9e5dcad93e0a470b06dfeb1d5bd780965fac country=JP asn=2516 ja3=00000000000000000000000000000000 uA=VRC.Core.BestHTTP-Y platform=standalonewindows gsv=Release_1343 store=steam clientVersion=2024.1.1p2-1407--Release unityVersion=2022.3.6f1-DWR autok=b44d782088b32903 uId=usr_18698e31-bd1a-4aa6-b1a0-44cf9c51ab00 2fa=N lv=44 f=78 ms=4 s=200 route=/api/1/worlds/:id - TIME_OK".to_string(),
+        event: data.next(),
         time: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as i64,
         host: "localhost".to_string()
     }
 }
+
 fn generate_needle() -> crate::WritableEvent {
     crate::WritableEvent{
         event: "haystack haystack haystack haystack haystack haystack needle haystack haystack haystack haystack".to_string(),
@@ -405,7 +400,7 @@ fn generate_haystack() -> crate::WritableEvent {
 #[test]
 fn test_explode() -> Result<()> {
     let mut fragments = HashSet::default();
-    MinuteWriter::explode(&mut fragments, &"hello world".to_string());
+    Minute::explode(&mut fragments, &"hello world".to_string());
 
     assert!(fragments.contains("hello"));
     assert!(fragments.contains("world"));
@@ -424,7 +419,7 @@ fn test_explode_speed() -> Result<()> {
     // start a timer
     let start = SystemTime::now();
     for _ in 0..10000 {
-        MinuteWriter::explode(&mut fragments, &"prod-api-blue-gusher-37l master-build-2024-03-14-pogo-q-humslash notice: r=ggsc8rn0 - m=GET u=/api/1/worlds/wrld_5ef1f09c-a4dc-4fef-8cc1-45d9b82dbe00?apiKey=JlE5Jldo5Jibnk5O5hTx6XVqsJu4WJ26&organization=vrchat ip=240f:77:1cc0:1:29ff:87db:78e8:274f mac=e84e9e5dcad93e0a470b06dfeb1d5bd780965fac country=JP asn=2516 ja3=00000000000000000000000000000000 uA=VRC.Core.BestHTTP-Y platform=standalonewindows gsv=Release_1343 store=steam clientVersion=2024.1.1p2-1407--Release unityVersion=2022.3.6f1-DWR autok=b44d782088b32903 uId=usr_18698e31-bd1a-4aa6-b1a0-44cf9c51ab00 2fa=N lv=44 f=78 ms=4 s=200 route=/api/1/worlds/:id - TIME_OK".to_string());
+        Minute::explode(&mut fragments, &"prod-api-blue-gusher-37l master-build-2024-03-14-pogo-q-humslash notice: r=ggsc8rn0 - m=GET u=/api/1/worlds/wrld_5ef1f09c-a4dc-4fef-8cc1-45d9b82dbe00?apiKey=JlE5Jldo5Jibnk5O5hTx6XVqsJu4WJ26&organization=vrchat ip=240f:77:1cc0:1:29ff:87db:78e8:274f mac=e84e9e5dcad93e0a470b06dfeb1d5bd780965fac country=JP asn=2516 ja3=00000000000000000000000000000000 uA=VRC.Core.BestHTTP-Y platform=standalonewindows gsv=Release_1343 store=steam clientVersion=2024.1.1p2-1407--Release unityVersion=2022.3.6f1-DWR autok=b44d782088b32903 uId=usr_18698e31-bd1a-4aa6-b1a0-44cf9c51ab00 2fa=N lv=44 f=78 ms=4 s=200 route=/api/1/worlds/:id - TIME_OK".to_string());
     }
 
     let elapsed = start.elapsed().unwrap();
@@ -437,23 +432,24 @@ fn test_explode_speed() -> Result<()> {
 fn test_explode_unicode() -> Result<()> {
     let unicode = "dN=\u{30c1}\u{30e7}\u{30b3}\u{7f8e}\u{5473}\u{3044}".to_string();
     let mut fragments = HashSet::default();
-    MinuteWriter::explode(&mut fragments, &unicode);
+    Minute::explode(&mut fragments, &unicode);
 
     Ok(())
 }
 
 #[test]
 fn test_minute_writer() -> Result<()> {
-    let mut minute = MinuteWriter::new(
+    let mut minute = Minute::new(
         1,
         2,
         3,
         "quick",
         &"./test_data")?;
 
+    let mut test_data_source = TestData::new();
     let mut test_data = Vec::new();
     for _ in 0..1000 {
-        let data = generate_test_data();
+        let data = generate_test_data(&mut test_data_source);
         test_data.push(data);
     }
     minute.write_second(test_data)?;
@@ -463,7 +459,7 @@ fn test_minute_writer() -> Result<()> {
 
 #[test]
 fn test_minute_reader() -> Result<()> {
-    let mut minute = MinuteWriter::new(
+    let mut minute = Minute::new(
         1,
         2,
         3,
@@ -485,7 +481,7 @@ fn test_minute_reader() -> Result<()> {
     }
     minute.seal()?;
 
-    let reader = MinuteReader::new(
+    let reader = Minute::new(
         1,
         2,
         3,
@@ -507,9 +503,10 @@ fn test_minute_reader() -> Result<()> {
 
 #[test]
 fn test_minute() -> Result<()> {
-    let mut minute = ShardedMinuteWriter::new(
+    let mut minute = ShardedMinute::new(
         1,
         "./test_data".to_string());
+    let mut test_data_source = TestData::new();
 
     // start a timer
     let start = SystemTime::now();
@@ -520,7 +517,7 @@ fn test_minute() -> Result<()> {
     for _ in 0..60 {
         let mut test_data = Vec::new();
         for _ in 0..5000 {
-            let data = generate_test_data();
+            let data = generate_test_data(&mut test_data_source);
             count += 1;
             bytes += data.get_size_in_bytes();
             test_data.push(data);
@@ -535,8 +532,12 @@ fn test_minute() -> Result<()> {
     let elapsed_s = elapsed.as_secs() as i128;
     println!("Wrote {} events ({} bytes, {}/sec) in {} us, {} ms, {} s", count, bytes, bytes/60, elapsed_us, elapsed_ms, elapsed_s);
 
+    let start = SystemTime::now();
     // force seal the minute
     minute.force_seal()?;
+    let elapsed = start.elapsed().unwrap();
+    let elapsed_ms = elapsed.as_millis() as i128;
+    println!("Sealed in {} ms", elapsed_ms);
 
     Ok(())
 }
