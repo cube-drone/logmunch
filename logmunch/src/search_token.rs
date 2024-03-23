@@ -1,14 +1,15 @@
-use anyhow::Result;
 use growable_bloom_filter::GrowableBloom;
 use serde::{Serialize, Deserialize};
+//use std::collections::HashSet;
+use fxhash::FxHashSet as HashSet;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchToken{
     pub token: String,
-    pub trigrams: Vec<String>,
+    pub trigrams: HashSet<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SearchTree{
     None,
     Token(SearchToken),
@@ -124,10 +125,12 @@ impl SearchTree {
                 break;
             }
             else {
+                let mut trigrams: HashSet<String> = HashSet::default();
+                crate::minute::Minute::explode(&mut trigrams, &token.to_string());
                 stack.push(SearchTree::Token(
                     SearchToken {
                         token: token.to_string(),
-                        trigrams: Self::generate_trigrams(&token.to_string())
+                        trigrams,
                     }
                 ));
             }
@@ -145,22 +148,11 @@ impl SearchTree {
         }
     }
 
-    fn generate_trigrams(token: &str) -> Vec<String> {
-        let mut trigrams: Vec<String> = Vec::new();
-        for word in token.split_whitespace() {
-            let mut word = word.to_string();
-            for i in 0..word.len()-2 {
-                trigrams.push(word[i..i+3].to_string());
-            }
-        }
-        trigrams
-    }
-
-    pub fn list_trigrams(&self) -> Vec<String> {
+    pub fn list_trigrams(&self) -> HashSet<String> {
         match self {
-            SearchTree::None => Vec::new(),
+            SearchTree::None => HashSet::default(),
             SearchTree::Token(token) => token.trigrams.clone(),
-            SearchTree::Not(tree) => Vec::new(), // don't include trigrams from not
+            SearchTree::Not(_tree) => HashSet::default(), // don't include trigrams from not
             SearchTree::And(left, right) => {
                 let mut trigrams = left.list_trigrams();
                 trigrams.extend(right.list_trigrams());
@@ -197,8 +189,7 @@ impl SearchTree {
         match self {
             SearchTree::None => true,
             SearchTree::Token(token) => {
-                let mut trigrams = token.trigrams.clone();
-                for trigram in trigrams.iter() {
+                for trigram in token.trigrams.iter() {
                     if !filter.contains(trigram) {
                         return false;
                     }
@@ -237,7 +228,7 @@ impl Search{
 
 
 #[test]
-fn test_tokenize_and_parse() -> Result<()> {
+fn test_tokenize_and_parse() {
     let fragments = SearchTree::tokenize(&"hello world".to_string());
 
     assert!(fragments.contains(&"hello".to_string()));
@@ -270,6 +261,4 @@ fn test_tokenize_and_parse() -> Result<()> {
     assert!(tree.test(&"sweet prince goodbye"));
     assert!(tree.test(&"sweet prince---09999 HELLOHLgoodbye=98282"));
     assert!(tree.test(&"sting stang stung h=hello t=world of tanks"));
-
-    Ok(())
 }

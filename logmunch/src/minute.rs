@@ -4,7 +4,6 @@ use anyhow::Result;
 
 use fxhash::FxHashSet as HashSet;
 use growable_bloom_filter::GrowableBloom;
-use serde::{Serialize, Deserialize};
 use postcard;
 
 use rusqlite::{Connection as SqlConnection, DatabaseName, params, Transaction};
@@ -26,7 +25,7 @@ pub fn execute_and_eat_already_exists_errors(connection: &SqlConnection, sql: &s
 }
 
 // Minute isn't intended to be passed around between threads, so it's not Sync, or Send, or nothin'
-struct Minute{
+pub struct Minute{
     connection: SqlConnection,
 }
 
@@ -209,6 +208,13 @@ impl Minute{
     }
 
     pub fn search(&self, search_string: &crate::search_token::SearchTree) -> Result<Vec<String>> {
+        //
+        // We can't get to the search function without having first verified that the minute is sealed
+        // the bloom filter is available, and most of all: it said that there's (probably) the search string in the minute
+        //
+
+        // for each fragment in the search string, we need to check the search_fragments table to determine if it
+        // can be found there?
 
         Ok(Vec::new())
     }
