@@ -1,28 +1,21 @@
 use std::time::SystemTime;
 use std::fs;
 use anyhow::Result;
-
+use serde::{Serialize, Deserialize};
 use fxhash::FxHashSet as HashSet;
 use growable_bloom_filter::GrowableBloom;
 use postcard;
 
 use rusqlite::{Connection as SqlConnection, DatabaseName, params, Transaction};
 
-///
-/// We know that CREATE TABLE IF NOT EXISTS will usually fail (the table will already exist), so we eat the error
-///
-pub fn execute_and_eat_already_exists_errors(connection: &SqlConnection, sql: &str) -> Result<()> {
-    match connection.execute(sql, []){
-        Ok(_) => Ok(()),
-        Err(e) => {
-            if e.to_string().contains("there is already") {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Could not execute SQL: {}", e))
-            }
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Event{
+    pub id: i64,
+    pub event: String,
+    pub time: i64,
+    pub host: String,
 }
+
 
 // Minute isn't intended to be passed around between threads, so it's not Sync, or Send, or nothin'
 pub struct Minute{
@@ -82,14 +75,31 @@ impl Minute{
         connection.pragma_update(Some(DatabaseName::Main), "journal_mode", "WAL")?;
         connection.pragma_update(Some(DatabaseName::Main), "synchronous", "normal")?;
 
-        execute_and_eat_already_exists_errors(&connection, CREATE_TABLE)?;
-        execute_and_eat_already_exists_errors(&connection, CREATE_SEARCH_FRAGMENTS)?;
-        execute_and_eat_already_exists_errors(&connection, CREATE_BLOOM)?;
+        Self::execute_and_eat_already_exists_errors(&connection, CREATE_TABLE)?;
+        Self::execute_and_eat_already_exists_errors(&connection, CREATE_SEARCH_FRAGMENTS)?;
+        Self::execute_and_eat_already_exists_errors(&connection, CREATE_BLOOM)?;
 
         Ok(Minute{
             connection,
         })
     }
+
+    ///
+    /// We know that CREATE TABLE IF NOT EXISTS will usually fail (the table will already exist), so we eat the error
+    ///
+    pub fn execute_and_eat_already_exists_errors(connection: &SqlConnection, sql: &str) -> Result<()> {
+        match connection.execute(sql, []){
+            Ok(_) => Ok(()),
+            Err(e) => {
+                if e.to_string().contains("there is already") {
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!("Could not execute SQL: {}", e))
+                }
+            }
+        }
+    }
+
 
     pub fn explode(fragments: &mut HashSet<String>, data: &String){
         // this hashset contains every word in the string
@@ -207,11 +217,15 @@ impl Minute{
         Ok(bloom)
     }
 
-    pub fn search(&self, search_string: &crate::search_token::SearchTree) -> Result<Vec<String>> {
+    pub fn search(&self, search: &crate::search_token::Search) -> Result<Vec<Event>> {
         //
-        // We can't get to the search function without having first verified that the minute is sealed
-        // the bloom filter is available, and most of all: it said that there's (probably) the search string in the minute
+        // BEFORE the search function is called, we've already verified that the minute
+        //  contains the search term (probably) using the bloom filter.
+        // Now it's time to actually search the minute for the term.
         //
+
+        let tokens = search.tokens();
+
 
         // for each fragment in the search string, we need to check the search_fragments table to determine if it
         // can be found there?

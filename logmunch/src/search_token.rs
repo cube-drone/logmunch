@@ -207,6 +207,7 @@ impl SearchTree {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Search{
     pub search_string: String,
     pub tree: SearchTree
@@ -222,6 +223,10 @@ impl Search{
 
     pub fn test(&self, event: &str) -> bool {
         self.tree.test(event)
+    }
+
+    pub fn tokens(&self) -> HashSet<String> {
+        self.tree.list_trigrams()
     }
 
 }
