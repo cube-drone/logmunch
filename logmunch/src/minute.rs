@@ -258,11 +258,11 @@ impl Minute{
                         Ok(count)
                     });
                     if resp.unwrap() == 0 {
-                        println!("Batch {} does not contain fragment {}", batch_id, fragment);
+                        //println!("Batch {} does not contain fragment {}", batch_id, fragment);
                         return false;
                     }
                     else{
-                        println!("Batch {} contains fragment {}", batch_id, fragment);
+                        //println!("Batch {} contains fragment {}", batch_id, fragment);
                     }
                 }
                 true
@@ -592,7 +592,9 @@ fn test_minute_search() -> Result<()> {
     println!("Found {} results", results.len());
     //println!("{:?}", results);
     assert!(results.len() > 0);
-    assert!(results[0].event.contains(searchterm));
+    println!("{:?}", results[0]);
+    assert!(results[0].event.contains("presence"));
+    assert!(!results[0].event.contains("homer"));
     assert!(results.len() < 1000);
 
 

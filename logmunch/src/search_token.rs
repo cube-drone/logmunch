@@ -96,10 +96,13 @@ impl SearchTree {
     }
 
     fn build_tree(tokens: &Vec<String>) -> SearchTree {
-        println!("🔥Building tree from tokens: {:?}", tokens);
+        Self::build_tree_int(tokens, false)
+    }
+
+    fn build_tree_int(tokens: &Vec<String>, pending_negation: bool) -> SearchTree {
         let mut stack: Vec<SearchTree> = Vec::new();
         let mut i = 0;
-        let mut pending_negation = false;
+        let mut pending_negation = pending_negation;
 
         while i < tokens.len() {
             let token = &tokens[i];
@@ -151,10 +154,8 @@ impl SearchTree {
                 break;
             }
             else if stack.len() == 1{
-                pending_negation = false;
                 let left = stack.pop().unwrap();
-                let right = Self::build_tree(&tokens[i..].to_vec());
-                println!("🔥left: {:?}, right: {:?}", left, right);
+                let right = Self::build_tree_int(&tokens[i..].to_vec(), pending_negation);
                 stack.push(SearchTree::And(Box::new(left), Box::new(right)));
                 break;
             }
@@ -169,7 +170,6 @@ impl SearchTree {
                     pending_negation = false;
                 }
                 else{
-                    println!("🔥Pushing token: {}", token);
                     stack.push(SearchTree::Token(
                         SearchToken {
                             token: token.to_string(),
@@ -181,7 +181,10 @@ impl SearchTree {
             i += 1;
         }
 
-        if stack.len() == 0 {
+        if stack.len() > 2 {
+            panic!("The fuck?: {:?}", tokens);
+        }
+        else if stack.len() == 0 {
             SearchTree::None
         }
         else if stack.len() == 1 {
@@ -330,6 +333,14 @@ impl Search{
         self.tree.list_trigrams()
     }
 
+    pub fn search_string(&self) -> String {
+        self.search_string.clone()
+    }
+
+    pub fn tree(&self) -> SearchTree {
+        self.tree.clone()
+    }
+
 }
 
 #[test]
@@ -426,7 +437,6 @@ fn test_tokenize_and_parse() {
 fn test_negation() {
     let fragments = SearchTree::tokenize(&"!hello".to_string());
     let tree = SearchTree::build_tree(&fragments);
-    println!("{:?}", tree);
 
     assert!(!tree.test(&"hello world"));
     assert!(tree.test(&"goodbye world"));
@@ -458,4 +468,46 @@ fn test_negation() {
     assert!(!tree.test(&"hello goodbye"));
     assert!(!tree.test(&"mellow hello how are you feeling goodbye toby"));
     assert!(tree.test(&"mellow how are you feeling toby"));
+
+    let fragments = SearchTree::tokenize(&"presence !homer".to_string());
+    assert_eq!(fragments, vec!["presence".to_string(), "!".to_string(), "homer".to_string()]);
+
+    let tree = SearchTree::build_tree(&fragments);
+
+    assert_eq!(tree,
+        SearchTree::And(
+            Box::new(SearchTree::Token(SearchToken {
+                token: "presence".to_string(),
+                trigrams: SearchTree::quick_trigrams("presence")
+            })),
+            Box::new(SearchTree::Not(Box::new(SearchTree::Token(SearchToken {
+                token: "homer".to_string(),
+                trigrams: SearchTree::quick_trigrams("homer")
+            }))))
+        )
+    );
+}
+
+#[test]
+fn test_negation_more(){
+    let search = Search::new("presence !homer");
+
+    assert!(!search.test(&"2023-11-10T04:53:04.096624+00:00 girlboss 09c01c523eef 300704 -  212.102.46.118 - - [10/Nov/2023:04:53:04 +0000] \"POST /homer-man-x/presence/update HTTP/1.1\""));
+    assert!(search.test(&"2023-11-10T04:53:04.096624+00:00 girlboss 09c01c523eef 300704 -  212.102.46.118 - - [10/Nov/2023:04:53:04 +0000] \"POST /presence/update HTTP/1.1\""));
+
+    let search = Search::new("hats !bats !cats !rats mats");
+
+    assert!(search.test(&"mats hats mats"));
+    assert!(search.test(&"hats mats hats"));
+    assert!(!search.test(&"hats cats hats"));
+    assert!(!search.test(&"hats bats hats"));
+    assert!(!search.test(&"hats rats hats"));
+
+    let search = Search::new("!bats !cats hats mats !rats");
+
+    assert!(search.test(&"mats hats mats"));
+    assert!(search.test(&"hats mats hats"));
+    assert!(!search.test(&"hats cats hats"));
+    assert!(!search.test(&"hats bats hats"));
+    assert!(!search.test(&"hats rats hats"));
 }
