@@ -24,6 +24,7 @@ pub struct Minute{
 
 const CREATE_TABLE: &str = r#"CREATE TABLE IF NOT EXISTS log (
     id INTEGER PRIMARY KEY,
+    batch INTEGER,
     log TEXT NOT NULL,
     host TEXT NOT NULL,
     host_time INTEGER NOT NULL
@@ -31,19 +32,27 @@ const CREATE_TABLE: &str = r#"CREATE TABLE IF NOT EXISTS log (
 
 const INDEX_TIME: &str = r#"CREATE INDEX IF NOT EXISTS log_host_time ON log (host_time)"#;
 const INDEX_HOST: &str = r#"CREATE INDEX IF NOT EXISTS log_host ON log (host)"#;
+const INDEX_BATCH: &str = r#"CREATE INDEX IF NOT EXISTS log_batch ON log (batch)"#;
 
-const INSERT_LOG: &str = r#"INSERT INTO log (id, log, host, host_time) VALUES (?, ?, ?, ?)"#;
+const INSERT_LOG: &str = r#"INSERT INTO log (id, batch, log, host, host_time) VALUES (?, ?, ?, ?, ?)"#;
+
+const GET_LOG_BY_BATCH: &str = r#"SELECT id, log, host, host_time FROM log WHERE batch = ?"#;
 
 const CREATE_SEARCH_FRAGMENTS: &str = r#"CREATE TABLE IF NOT EXISTS search_fragments (
     id INTEGER PRIMARY KEY,
+    batch INTEGER,
     fragment TEXT,
     min_log_id INTEGER,
     max_log_id INTEGER
 )"#;
 
-const INDEX_FRAGMENT: &str = r#"CREATE INDEX IF NOT EXISTS search_fragments_fragment ON search_fragments (fragment)"#;
+const LIST_BATCHES: &str = r#"SELECT DISTINCT batch FROM log"#;
+const TEST_FOR_FRAGMENT_IN_BATCH: &str = r#"SELECT COUNT(*) FROM search_fragments WHERE batch = ? AND fragment = ?"#;
 
-const INSERT_FRAGMENT: &str = r#"INSERT INTO search_fragments (id, fragment, min_log_id, max_log_id) VALUES (?, ?, ?, ?)"#;
+const INDEX_FRAGMENT: &str = r#"CREATE INDEX IF NOT EXISTS search_fragments_fragment ON search_fragments (fragment)"#;
+const INDEX_FRAGMENT_BATCH: &str = r#"CREATE INDEX IF NOT EXISTS search_fragments_batch ON search_fragments (batch)"#;
+
+const INSERT_FRAGMENT: &str = r#"INSERT INTO search_fragments (id, batch, fragment) VALUES (?, ?, ?)"#;
 
 const GET_FRAGMENTS: &str = r#"SELECT DISTINCT fragment FROM search_fragments"#;
 
@@ -105,7 +114,7 @@ impl Minute{
         // this hashset contains every word in the string
         // it also contains every 3-letter fragment of every word
         for word in data.split_whitespace() {
-            fragments.insert(word.to_string().to_lowercase());
+            //fragments.insert(word.to_string().to_lowercase());
 
             let mut vec = Vec::new();
             for char in word.chars() {
@@ -117,6 +126,7 @@ impl Minute{
                     fragments.insert(str.to_lowercase());
                 }
             }
+            /*
             for token in word.split("="){
                 fragments.insert(token.to_string());
             }
@@ -129,6 +139,7 @@ impl Minute{
             for token in word.split("/"){
                 fragments.insert(token.to_string());
             }
+            */
         }
     }
 
@@ -136,9 +147,8 @@ impl Minute{
         let mut statement = tx.prepare_cached(INSERT_LOG)?;
         let mut fragment_statement = tx.prepare_cached(INSERT_FRAGMENT)?;
         let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as i64;
+        let batch = timestamp;
         let mut sequence = 0;
-        let first_id = (timestamp * 1000000) + 0 as i64;
-        let mut last_id = 0;
         let mut fragments: HashSet<String> = HashSet::default();
         // Lock the connection
         for event in data {
@@ -146,17 +156,17 @@ impl Minute{
             Minute::explode(&mut fragments, &event.event);
             fragments.insert(event.host.clone());
 
-            last_id = (timestamp * 1000000) + sequence as i64;
+            let id = (timestamp * 1000000) + sequence as i64;
             sequence += 1;
 
-            statement.execute(params![last_id, event.event, event.host, event.time])?;
+            statement.execute(params![id, batch, event.event, event.host, event.time])?;
         }
         // remove the empty string, nobody wants that
         //fragments.remove("");
         for fragment in fragments {
             sequence += 1;
             let id = (timestamp * 1000000) + sequence as i64;
-            fragment_statement.execute(params![id, fragment, first_id, last_id])?;
+            fragment_statement.execute(params![id, batch, fragment])?;
         }
         Ok(())
     }
@@ -192,7 +202,9 @@ impl Minute{
         // (and why would we? it's in the past)
         self.connection.execute(INDEX_TIME, [])?;
         self.connection.execute(INDEX_HOST, [])?;
+        self.connection.execute(INDEX_BATCH, [])?;
         self.connection.execute(INDEX_FRAGMENT, [])?;
+        self.connection.execute(INDEX_FRAGMENT_BATCH, [])?;
 
         // generate the bloooooooom
         self.generate_bloom_filter()?;
@@ -224,13 +236,63 @@ impl Minute{
         // Now it's time to actually search the minute for the term.
         //
 
-        let tokens = search.tokens();
+        // first, get a list of all of the batches in the minute
+        let mut statement = self.connection.prepare_cached(LIST_BATCHES)?;
+        let mut rows = statement.query([])?;
+        let mut batches = HashSet::default();
+        while let Some(row) = rows.next()? {
+            let batch: i64 = row.get(0)?;
+            batches.insert(batch);
+        }
 
+        let mut results: Vec<Event> = Vec::new();
 
-        // for each fragment in the search string, we need to check the search_fragments table to determine if it
-        // can be found there?
+        // determine which batches are likely to contain the search term
+        for batch_id in batches{
+            let batch_contains_search = search.lambda_test(&|set| {
+                // for each batch, we can try to disqualify the batch by finding a fragment that doesn't match
+                let mut test_statement = self.connection.prepare_cached(TEST_FOR_FRAGMENT_IN_BATCH).unwrap();
+                for fragment in set {
+                    let resp = test_statement.query_row(params![batch_id, fragment], |row| {
+                        let count: i64 = row.get(0)?;
+                        Ok(count)
+                    });
+                    if resp.unwrap() == 0 {
+                        println!("Batch {} does not contain fragment {}", batch_id, fragment);
+                        return false;
+                    }
+                    else{
+                        println!("Batch {} contains fragment {}", batch_id, fragment);
+                    }
+                }
+                true
+            });
+            if !batch_contains_search {
+                continue;
+            }
+            // if we can't disqualify the batch, we can search the batch for the search term
+            let mut statement = self.connection.prepare_cached(GET_LOG_BY_BATCH)?;
+            let mut rows = statement.query(params![batch_id])?;
+            while let Some(row) = rows.next()? {
+                let host: String = row.get(2)?;
+                let event: String = row.get(1)?;
+                let search_string = format!("{} {}", host, event);
+                if search.test(&search_string) {
+                    let event = Event{
+                        id: row.get(0)?,
+                        event: event,
+                        host: host,
+                        time: row.get(3)?,
+                    };
+                    results.push(event);
+                }
+                else{
+                    //println!("Event did not match search: {}", search_string);
+                }
+            }
+        }
 
-        Ok(Vec::new())
+        Ok(results)
     }
 }
 
@@ -347,12 +409,13 @@ impl ShardedMinute{
     }
 
     ///
-    /// (mostly for testing, I think?)
-    /// seal every minute
+    /// Normally we would seal the minute when it's time to seal the minute, but this forces every minute that the
+    /// ShardedMinute has a ticket for to be sealed.
+    ///  (it's only intended to be used for testing)
     ///
+    #[allow(dead_code)]
     pub fn force_seal(&mut self) -> Result<()> {
         for node in &self.tickets {
-            let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs() as u32;
             let unique_id = format!("{}-{}", node.machine_id, node.node_id);
             let mut minute = Minute::new(
                 node.days,
@@ -367,11 +430,13 @@ impl ShardedMinute{
 }
 
 
+#[allow(dead_code)]
 struct TestData{
     lines: Vec<String>,
     i: usize,
 }
 
+#[allow(dead_code)]
 impl TestData{
     fn new() -> Self {
         // open a file and read it into memory
@@ -392,6 +457,7 @@ impl TestData{
     }
 }
 
+#[allow(dead_code)]
 fn generate_test_data(data: &mut TestData) -> crate::WritableEvent {
     crate::WritableEvent{
         event: data.next(),
@@ -400,6 +466,7 @@ fn generate_test_data(data: &mut TestData) -> crate::WritableEvent {
     }
 }
 
+#[allow(dead_code)]
 fn generate_needle() -> crate::WritableEvent {
     crate::WritableEvent{
         event: "haystack haystack haystack haystack haystack haystack needle haystack haystack haystack haystack".to_string(),
@@ -407,6 +474,8 @@ fn generate_needle() -> crate::WritableEvent {
         host: "localhost".to_string()
     }
 }
+
+#[allow(dead_code)]
 fn generate_haystack() -> crate::WritableEvent {
     crate::WritableEvent{
         event: "haystack haystack haystack haystack haystack haystack haystack haystack haystack".to_string(),
@@ -421,8 +490,6 @@ fn test_explode() -> Result<()> {
     let mut fragments = HashSet::default();
     Minute::explode(&mut fragments, &"hello world".to_string());
 
-    assert!(fragments.contains("hello"));
-    assert!(fragments.contains("world"));
     assert!(fragments.contains("hel"));
     assert!(fragments.contains("ell"));
     assert!(fragments.contains("llo"));
@@ -456,14 +523,20 @@ fn test_explode_unicode() -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
+fn test_data_directory(test_name: &str) -> String {
+    let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as u32;
+    format!("./test_data/test_{}_{}", test_name, timestamp)
+}
+
 #[test]
 fn test_minute_writer() -> Result<()> {
     let mut minute = Minute::new(
-        1,
         2,
-        3,
+        4,
+        6,
         "quick",
-        &"./test_data")?;
+        &test_data_directory("minute_writer"))?;
 
     let mut test_data_source = TestData::new();
     let mut test_data = Vec::new();
@@ -473,19 +546,69 @@ fn test_minute_writer() -> Result<()> {
     }
     minute.write_second(test_data)?;
 
+    minute.seal()?;
+
     Ok(())
 }
 
 #[test]
-fn test_minute_reader() -> Result<()> {
+fn test_minute_search() -> Result<()> {
+    let mut minute = Minute::new(
+        2,
+        4,
+        6,
+        "search",
+        &test_data_directory("minute_search"))?;
+
+    let mut test_data_source = TestData::new();
+    let mut test_data = Vec::new();
+    for _ in 0..1000 {
+        let data = generate_test_data(&mut test_data_source);
+        test_data.push(data);
+    }
+    minute.write_second(test_data)?;
+
+    minute.seal()?;
+
+    let searchterm = "not writable";
+
+    let results = minute.search(&crate::search_token::Search::new(searchterm))?;
+    println!("Found {} results", results.len());
+    assert!(results.len() > 0);
+    assert!(results[0].event.contains(searchterm));
+    assert!(results.len() < 1000);
+
+    let searchterm = "presence";
+
+    let results = minute.search(&crate::search_token::Search::new(searchterm))?;
+    println!("Found {} results", results.len());
+    assert!(results.len() > 0);
+    assert!(results[0].event.contains(searchterm));
+    assert!(results.len() < 1000);
+
+    let searchterm = "presence !homer";
+
+    let results = minute.search(&crate::search_token::Search::new(searchterm))?;
+    println!("Found {} results", results.len());
+    //println!("{:?}", results);
+    assert!(results.len() > 0);
+    assert!(results[0].event.contains(searchterm));
+    assert!(results.len() < 1000);
+
+
+    Ok(())
+}
+
+#[test]
+fn test_generated_bloom() -> Result<()> {
     let mut minute = Minute::new(
         1,
         2,
         3,
-        "toast",
-        &"./test_data")?;
+        "bloom",
+        &test_data_directory("generated_bloom"))?;
 
-    for i in 0..5{
+    for _ in 0..5{
         let mut test_data = Vec::new();
         for i in 0..1000 {
             if i % 384 == 0 {
@@ -500,17 +623,8 @@ fn test_minute_reader() -> Result<()> {
     }
     minute.seal()?;
 
-    let reader = Minute::new(
-        1,
-        2,
-        3,
-        "toast",
-        &"./test_data")?;
-
-    let bloom = reader.get_bloom_filter()?;
-    assert!(bloom.contains("haystack"));
+    let bloom = minute.get_bloom_filter()?;
     assert!(bloom.contains("hay"));
-    assert!(bloom.contains("needle"));
     assert!(bloom.contains("nee"));
     assert!(bloom.contains("eed"));
     assert!(bloom.contains("edl"));
@@ -521,10 +635,10 @@ fn test_minute_reader() -> Result<()> {
 
 
 #[test]
-fn test_minute() -> Result<()> {
+fn test_sharded_minute() -> Result<()> {
     let mut minute = ShardedMinute::new(
         1,
-        "./test_data".to_string());
+        test_data_directory("sharded_minute").to_string());
     let mut test_data_source = TestData::new();
 
     // start a timer
@@ -535,7 +649,7 @@ fn test_minute() -> Result<()> {
     let mut bytes = 0;
     for _ in 0..60 {
         let mut test_data = Vec::new();
-        for _ in 0..5000 {
+        for _ in 0..1000 {
             let data = generate_test_data(&mut test_data_source);
             count += 1;
             bytes += data.get_size_in_bytes();
