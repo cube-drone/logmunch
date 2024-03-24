@@ -573,7 +573,6 @@ fn test_minute_search() -> Result<()> {
     let searchterm = "not writable";
 
     let results = minute.search(&crate::search_token::Search::new(searchterm))?;
-    println!("Found {} results", results.len());
     assert!(results.len() > 0);
     assert!(results[0].event.contains(searchterm));
     assert!(results.len() < 1000);
@@ -581,7 +580,6 @@ fn test_minute_search() -> Result<()> {
     let searchterm = "presence";
 
     let results = minute.search(&crate::search_token::Search::new(searchterm))?;
-    println!("Found {} results", results.len());
     assert!(results.len() > 0);
     assert!(results[0].event.contains(searchterm));
     assert!(results.len() < 1000);
@@ -589,10 +587,7 @@ fn test_minute_search() -> Result<()> {
     let searchterm = "presence !homer";
 
     let results = minute.search(&crate::search_token::Search::new(searchterm))?;
-    println!("Found {} results", results.len());
-    //println!("{:?}", results);
     assert!(results.len() > 0);
-    println!("{:?}", results[0]);
     assert!(results[0].event.contains("presence"));
     assert!(!results[0].event.contains("homer"));
     assert!(results.len() < 1000);
@@ -627,6 +622,12 @@ fn test_generated_bloom() -> Result<()> {
 
     let bloom = minute.get_bloom_filter()?;
     assert!(bloom.contains("hay"));
+    assert!(bloom.contains("ays"));
+    assert!(bloom.contains("yst"));
+    assert!(bloom.contains("sta"));
+    assert!(bloom.contains("tac"));
+    assert!(bloom.contains("ack"));
+
     assert!(bloom.contains("nee"));
     assert!(bloom.contains("eed"));
     assert!(bloom.contains("edl"));
@@ -662,17 +663,19 @@ fn test_sharded_minute() -> Result<()> {
 
     // stop the timer
     let elapsed = start.elapsed().unwrap();
-    let elapsed_us = elapsed.as_micros() as i128;
+    //let elapsed_us = elapsed.as_micros() as i128;
     let elapsed_ms = elapsed.as_millis() as i128;
-    let elapsed_s = elapsed.as_secs() as i128;
-    println!("Wrote {} events ({} bytes, {}/sec) in {} us, {} ms, {} s", count, bytes, bytes/60, elapsed_us, elapsed_ms, elapsed_s);
+    //let elapsed_s = elapsed.as_secs() as i128;
+    //println!("Wrote {} events ({} bytes, {}/sec) in {} us, {} ms, {} s", count, bytes, bytes/60, elapsed_us, elapsed_ms, elapsed_s);
+    assert!(elapsed_ms < 60000);
 
     let start = SystemTime::now();
     // force seal the minute
     minute.force_seal()?;
     let elapsed = start.elapsed().unwrap();
     let elapsed_ms = elapsed.as_millis() as i128;
-    println!("Sealed in {} ms", elapsed_ms);
+    //println!("Sealed in {} ms", elapsed_ms);
+    assert!(elapsed_ms < 10000);
 
     Ok(())
 }
