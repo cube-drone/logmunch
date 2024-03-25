@@ -12,6 +12,8 @@ use rocket::tokio;
 mod minute;
 mod search_token;
 
+mod reader;
+
 /*
 POST /services/collector/event/1.0 {}
 HEADERS:

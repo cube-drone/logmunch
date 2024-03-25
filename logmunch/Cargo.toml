@@ -17,3 +17,4 @@ rusqlite = { version = "0.31.0", features = ["bundled", "blob"]}
 fxhash = "0.2.1"
 growable-bloom-filter = "2.1.0"
 postcard = {version = "=1.0.8", features = ["alloc"]}
+walkdir = "=2.5.0"

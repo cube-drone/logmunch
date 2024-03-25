@@ -431,14 +431,14 @@ impl ShardedMinute{
 
 
 #[allow(dead_code)]
-struct TestData{
+pub struct TestData{
     lines: Vec<String>,
     i: usize,
 }
 
 #[allow(dead_code)]
 impl TestData{
-    fn new() -> Self {
+    pub fn new() -> Self {
         // open a file and read it into memory
         // split it into lines
         let contents = fs::read_to_string("../test-log-generator/sample.log").unwrap();
@@ -447,7 +447,7 @@ impl TestData{
         TestData{lines, i: 0}
     }
 
-    fn next(&mut self) -> String {
+    pub fn next(&mut self) -> String {
         let line = self.lines[self.i].clone();
         self.i += 1;
         if self.i >= self.lines.len() {
@@ -458,7 +458,7 @@ impl TestData{
 }
 
 #[allow(dead_code)]
-fn generate_test_data(data: &mut TestData) -> crate::WritableEvent {
+pub fn generate_test_data(data: &mut TestData) -> crate::WritableEvent {
     crate::WritableEvent{
         event: data.next(),
         time: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as i64,
@@ -524,7 +524,7 @@ fn test_explode_unicode() -> Result<()> {
 }
 
 #[allow(dead_code)]
-fn test_data_directory(test_name: &str) -> String {
+pub fn test_data_directory(test_name: &str) -> String {
     let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as u32;
     format!("./test_data/test_{}_{}", test_name, timestamp)
 }
