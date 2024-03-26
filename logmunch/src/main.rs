@@ -1,5 +1,5 @@
 #[macro_use] extern crate rocket;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock, Mutex};
 use std::time::SystemTime;
 use rocket::data::Data;
 use rocket::data::ToByteUnit;
@@ -10,6 +10,7 @@ use crossbeam::channel::{Sender, Receiver};
 use rocket::tokio;
 
 mod minute;
+mod minute_db;
 mod search_token;
 
 mod reader;
@@ -131,7 +132,8 @@ async fn ingest(services: &State<Services>, data: Data<'_>, version: f32) -> &'s
 #[derive(Clone)]
 pub struct Services{
     sender: Arc<Sender<WritableEvent>>,
-    receiver: Arc<Receiver<WritableEvent>>
+    receiver: Arc<Receiver<WritableEvent>>,
+    minute_db: Arc<minute_db::MinuteDB>,
 }
 
 #[launch]
@@ -139,9 +141,12 @@ async fn rocket() -> _ {
 
     let (sender, receiver) = unbounded::<WritableEvent>();
 
+    let minute_db_bytes = 1024 * 1024 * 1024;
+
     let services = Services{
         sender: Arc::new(sender),
-        receiver: Arc::new(receiver)
+        receiver: Arc::new(receiver),
+        minute_db: Arc::new(minute_db::MinuteDB::new(minute_db_bytes)),
     };
 
     let mut app = rocket::build();

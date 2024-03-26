@@ -1,3 +1,4 @@
+use std::sync::{Arc, RwLock, Mutex};
 use std::time::SystemTime;
 use std::fs;
 use anyhow::Result;
@@ -8,17 +9,57 @@ use postcard;
 
 use rusqlite::{Connection as SqlConnection, DatabaseName, params, Transaction};
 
+///
+/// The Event is the basic unit of data that we store in a minute, it's a _log line_.
+/// Maybe that means it should be renamed, "log line".
+///
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Event{
+pub struct Log{
     pub id: i64,
-    pub event: String,
+    pub message: String,
     pub time: i64,
     pub host: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MinuteId{
+    pub day: u32,
+    pub hour: u32,
+    pub minute: u32,
+    pub unique_id: String,
+}
+
+impl MinuteId{
+    pub fn new(day: u32, hour: u32, minute: u32, unique_id: &str) -> MinuteId {
+        MinuteId{
+            day,
+            hour,
+            minute,
+            unique_id: unique_id.to_string(),
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        format!("{}-{}-{}-{}", self.day, self.hour, self.minute, self.unique_id)
+    }
+
+    pub fn from_string(s: &str) -> Result<MinuteId> {
+        let split = s.split("-").collect::<Vec<&str>>();
+        let day = split[0].parse::<u32>()?;
+        let hour = split[1].parse::<u32>()?;
+        let minute = split[2].parse::<u32>()?;
+        let unique_id = split[3].to_string();
+        Ok(MinuteId{
+            day,
+            hour,
+            minute,
+            unique_id,
+        })
+}
 
 // Minute isn't intended to be passed around between threads, so it's not Sync, or Send, or nothin'
 pub struct Minute{
+    id: MinuteId,
     connection: SqlConnection,
 }
 
@@ -90,7 +131,12 @@ impl Minute{
 
         Ok(Minute{
             connection,
+            id: MinuteId::new(day, hour, minute, unique_id),
         })
+    }
+
+    pub fn unique_id(&self) -> MinuteId {
+        self.id.clone()
     }
 
     ///
@@ -114,8 +160,6 @@ impl Minute{
         // this hashset contains every word in the string
         // it also contains every 3-letter fragment of every word
         for word in data.split_whitespace() {
-            //fragments.insert(word.to_string().to_lowercase());
-
             let mut vec = Vec::new();
             for char in word.chars() {
                 vec.push(char);
@@ -126,20 +170,6 @@ impl Minute{
                     fragments.insert(str.to_lowercase());
                 }
             }
-            /*
-            for token in word.split("="){
-                fragments.insert(token.to_string());
-            }
-            for token in word.split("-"){
-                fragments.insert(token.to_string());
-            }
-            for token in word.split(":"){
-                fragments.insert(token.to_string());
-            }
-            for token in word.split("/"){
-                fragments.insert(token.to_string());
-            }
-            */
         }
     }
 
@@ -189,6 +219,8 @@ impl Minute{
         }
 
         let postcard_serialized = postcard::to_allocvec(&gbloom)?;
+        let size_bytes = postcard_serialized.len();
+        println!("Bloom filter size: {} bytes", size_bytes);
 
         let mut statement = self.connection.prepare_cached(INSERT_BLOOM)?;
         let timestamp_micros = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as i64;
@@ -229,7 +261,7 @@ impl Minute{
         Ok(bloom)
     }
 
-    pub fn search(&self, search: &crate::search_token::Search) -> Result<Vec<Event>> {
+    pub fn search(&self, search: &crate::search_token::Search) -> Result<Vec<Log>> {
         //
         // BEFORE the search function is called, we've already verified that the minute
         //  contains the search term (probably) using the bloom filter.
@@ -245,7 +277,7 @@ impl Minute{
             batches.insert(batch);
         }
 
-        let mut results: Vec<Event> = Vec::new();
+        let mut results: Vec<Log> = Vec::new();
 
         // determine which batches are likely to contain the search term
         for batch_id in batches{
@@ -275,16 +307,16 @@ impl Minute{
             let mut rows = statement.query(params![batch_id])?;
             while let Some(row) = rows.next()? {
                 let host: String = row.get(2)?;
-                let event: String = row.get(1)?;
+                let message: String = row.get(1)?;
                 let search_string = format!("{} {}", host, event);
                 if search.test(&search_string) {
-                    let event = Event{
+                    let log_entry = Log{
                         id: row.get(0)?,
-                        event: event,
+                        message: message,
                         host: host,
                         time: row.get(3)?,
                     };
-                    results.push(event);
+                    results.push(log_entry);
                 }
                 else{
                     //println!("Event did not match search: {}", search_string);
@@ -428,7 +460,6 @@ impl ShardedMinute{
         Ok(())
     }
 }
-
 
 #[allow(dead_code)]
 pub struct TestData{

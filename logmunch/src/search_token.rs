@@ -329,6 +329,10 @@ impl Search{
         self.tree.lambda_test(lambda)
     }
 
+    pub fn bloom_test(&self, filter: &GrowableBloom) -> bool {
+        self.tree.bloom_test(filter)
+    }
+
     pub fn tokens(&self) -> HashSet<String> {
         self.tree.list_trigrams()
     }
