@@ -9,7 +9,7 @@ use std::time::{SystemTime, Duration};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileInfo{
     pub path: String,
-    pub size_bytes: usize,
+    pub size_bytes: u64,
     pub last_modified: i64,
     pub day: i32,
     pub hour: i32,
@@ -18,14 +18,10 @@ pub struct FileInfo{
     pub unique_id: String,
 }
 
-pub struct FileList{
-    data_directory: String,
-    cap_bytes: usize,
-}
+impl FileInfo{
 
-impl FileList{
-    pub fn new(data_directory: &str, cap_bytes: usize) -> FileList{
-        FileList{data_directory: data_directory.to_string(), cap_bytes}
+    pub fn to_minute_id(&self) -> crate::minute_id::MinuteId{
+        crate::minute_id::MinuteId::new(self.day as u32, self.hour as u32, self.minute as u32, &self.unique_id)
     }
 
     fn parse_path(path: &str) -> Result<(i32, i32, i32, String)>{
@@ -39,11 +35,11 @@ impl FileList{
         Ok((day, hour, minute, unique_id))
     }
 
-    pub fn scan(&self) -> Result<Vec<FileInfo>>{
+    pub fn scan_and_clean(data_directory: &str, n_minutes: u64) -> Result<Vec<FileInfo>>{
         let mut files = Vec::new();
         let mut unopenable_files = HashSet::new();
 
-        for entry in WalkDir::new(&self.data_directory){
+        for entry in WalkDir::new(&data_directory){
             match entry{
                 Ok(entry) => {
                     if entry.file_type().is_file() == false {
@@ -52,7 +48,7 @@ impl FileList{
                     let path = entry.path().to_str();
                     match path{
                         Some(path) => {
-                            let path = path.replace(&self.data_directory.as_str(), "");
+                            let path = path.replace(data_directory, "");
                             if path.contains(".swp") || path.contains(".wal") {
                                 // a file that is currently being written to by another process
                                 // (do not open)
@@ -69,7 +65,7 @@ impl FileList{
                                     let last_modified = metadata.modified().unwrap().elapsed().unwrap().as_secs();
                                     files.push(FileInfo{
                                         path: path.to_string(),
-                                        size_bytes: size as usize,
+                                        size_bytes: size,
                                         last_modified: last_modified as i64,
                                         day,
                                         hour,
@@ -98,8 +94,31 @@ impl FileList{
         // and the oldest files last
         files.sort_by(|a, b| b.sort_key.cmp(&a.sort_key));
 
+        // if there are more files than n_minutes, delete the oldest files
+        if files.len() > n_minutes as usize {
+            let extra_files = files.split_off(n_minutes as usize);
+            for file in extra_files{
+                let path = format!("{}{}", data_directory, file.path);
+                Self::remove_file(path.as_str());
+            }
+        }
+
         // scan the data directory recursively and return a list of files as well as their sizes
         Ok(files)
+    }
+
+    ///
+    /// Remove a file from the filesystem.
+    ///
+    fn remove_file(path: &str){
+        // TODO: maybe we want to hook other behavior into here,
+        //   like compressing the file and archiving it?
+        match fs::remove_file(path){
+            Ok(_) => {},
+            Err(e) => {
+                println!("Error: {}", e);
+            }
+        }
     }
 
 }
@@ -148,8 +167,7 @@ fn test_directory_scan(){
 
     prep_test_directory(&test_directory);
 
-    let reader = FileList::new(&test_directory, 1000);
-    let files = reader.scan();
+    let files = FileInfo::scan_and_clean(&test_directory, 5);
 
     for file in files.unwrap(){
         println!("{:?}", file);

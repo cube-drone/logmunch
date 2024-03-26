@@ -1,10 +1,12 @@
 use std::time::SystemTime;
 use std::fs;
+use std::sync::Arc;
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use fxhash::FxHashSet as HashSet;
 use growable_bloom_filter::GrowableBloom;
 use postcard;
+use crossbeam::channel::Receiver;
 
 use rusqlite::{Connection as SqlConnection, DatabaseName, params, Transaction};
 
@@ -423,6 +425,65 @@ impl ShardedMinute{
             minute.seal()?;
         }
         Ok(())
+    }
+
+    pub fn write_loop(&mut self, receiver: Arc<Receiver<crate::WritableEvent>>) {
+
+        // 1 second (in microseconds)
+        let interval_us = 1000000;
+
+        loop {
+            // start a timer
+            let now = SystemTime::now();
+
+            // dump the entire receiver
+            let mut event_buffer: Vec<crate::WritableEvent> = Vec::new();
+            let mut n_bytes = 0;
+            while let Ok(event) = receiver.try_recv() {
+                n_bytes += event.get_size_in_bytes();
+                event_buffer.push(event);
+            }
+            let n_events = event_buffer.len();
+
+            // do something with the events
+            match self.write(event_buffer){
+                Ok(_) => {
+                },
+                Err(e) => {
+                    println!("Error writing events: {}", e);
+                }
+            }
+
+            let mut symbol = "b";
+            if n_bytes > 1024 {
+                n_bytes = n_bytes / 1024;
+                symbol = "Kb";
+            }
+            if n_bytes > 1024 {
+                n_bytes = n_bytes / 1024;
+                symbol = "Mb";
+            }
+            if n_bytes > 1024 {
+                n_bytes = n_bytes / 1024;
+                symbol = "Gb";
+            }
+
+            // how long did that take?
+            let elapsed = now.elapsed().unwrap();
+            let elapsed_us = elapsed.as_micros() as i128;
+            let sleep_us = interval_us - elapsed_us;
+
+            println!("Received {} events ({}{}) in {} us", n_events, n_bytes, symbol, elapsed_us);
+
+            // if we took too long, just skip the sleep
+            if sleep_us < 0 {
+                println!("Warning: write thread took too long: {} us", elapsed_us);
+                continue;
+            }
+            else{
+                std::thread::sleep(std::time::Duration::from_micros(sleep_us as u64));
+            }
+        }
     }
 }
 

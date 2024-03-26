@@ -1,6 +1,5 @@
 #[macro_use] extern crate rocket;
-use std::sync::{Arc, RwLock, Mutex};
-use std::time::SystemTime;
+use std::sync::Arc;
 use rocket::data::Data;
 use rocket::data::ToByteUnit;
 use rocket::State;
@@ -64,6 +63,17 @@ struct InputEvent{
     host: String
 }
 
+impl InputEvent{
+    pub fn to_writable_event(&self) -> WritableEvent{
+        let time_microseconds = (self.time.parse::<f64>().unwrap() * 1000000.0) as i64;
+        WritableEvent{
+            event: self.event.clone(),
+            time: time_microseconds,
+            host: self.host.clone()
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 struct WritableEvent{
     event: String,
@@ -87,13 +97,8 @@ fn ingest_options(version: f32) -> &'static str {
 async fn do_something(services: &State<Services>, row: &str){
     // do something with row
     let event = serde_json::from_str::<InputEvent>(row).unwrap();
-    let time_microseconds = (event.time.parse::<f64>().unwrap() * 1000000.0) as i64;
-    let writable_event = WritableEvent{
-        event: event.event,
-        time: time_microseconds,
-        host: event.host
-    };
-    services.sender.send(writable_event).unwrap();
+
+    services.sender.send(event.to_writable_event()).unwrap();
 }
 
 #[post("/services/collector/event/<version>", data="<data>")]
@@ -137,18 +142,49 @@ pub struct Services{
     minute_db: Arc<minute_db::MinuteDB>,
 }
 
+const ESTIMATED_MINUTE_BLOOM_SIZE_BYTES: u64 = 1500000;
+const ESTIMATED_MINUTE_DISK_SIZE_BYTES: u64 = 100000000;
+
 #[launch]
 async fn rocket() -> _ {
 
     let (sender, receiver) = unbounded::<WritableEvent>();
 
-    let minute_db_bytes = 1024 * 1024 * 1024;
-    let data_directory = "./data/";
+    // TODO: these things should be configurable env vars
+    // mathin' it out: 1 day (1440 minutes) should occupy about 270Mb of RAM, and 18Gb of disk
+    //  this is based on the assumption that each minute occupies 1.5Mb of RAM and 100Mb of disk
+    //  and that our ShardedMinuteWriter isn't writing more than one Minute object per minute
+    //      (which it starts to do past 3000 lines/s or 180000 lines/m)
+    let minute_db_gigabytes_string = std::env::var("MINUTE_DB_RAM_GB").unwrap_or("1.8".to_string());
+    let minute_db_disk_gigabytes_string = std::env::var("MINUTE_DB_DISK_GB").unwrap_or("20".to_string());
+    let minute_db_bytes = (minute_db_gigabytes_string.parse::<f64>().unwrap() * 1024.0 * 1024.0 * 1024.0) as u64;
+    let minute_db_disk_bytes = (minute_db_disk_gigabytes_string.parse::<f64>().unwrap() * 1024.0 * 1024.0 * 1024.0) as u64;
+
+    let machine_id = std::env::var("MACHINE_ID").unwrap_or("1".to_string()).parse::<u32>().unwrap();
+
+    // DATA_DIRECTORY is where we store the minute files
+    let data_directory = std::env::var("DATA_DIRECTORY").unwrap_or("./data/".to_string());
+    let minute_data_directory = format!("{}/minutes", data_directory);
+    // TODO: make sure the directory exists
+    // TODO: classic_data_directory for storing logs ... in a regular file!
+    let minute_db_n_max_minutes_for_ram = minute_db_bytes / ESTIMATED_MINUTE_BLOOM_SIZE_BYTES;
+    let minute_db_n_max_minutes_for_disk = minute_db_disk_bytes / ESTIMATED_MINUTE_DISK_SIZE_BYTES;
+    let minute_db_n_minutes = std::cmp::min(minute_db_n_max_minutes_for_ram, minute_db_n_max_minutes_for_disk);
+
+    if minute_db_n_minutes < 5 {
+        panic!("Not enough memory or disk space to run this program!");
+    }
+    else if minute_db_n_minutes == minute_db_n_max_minutes_for_ram {
+        println!("Booting with {} minutes in memory: increase minute cache length by increasing RAM", minute_db_n_minutes);
+    }
+    else if minute_db_n_minutes == minute_db_n_max_minutes_for_disk {
+        println!("Booting with {} minutes in memory: increase minute cache length by adding disk space", minute_db_n_minutes);
+    }
 
     let services = Services{
         sender: Arc::new(sender),
         receiver: Arc::new(receiver),
-        minute_db: Arc::new(minute_db::MinuteDB::new(minute_db_bytes, data_directory.to_string())),
+        minute_db: Arc::new(minute_db::MinuteDB::new(minute_db_n_minutes, minute_data_directory.to_string())),
     };
 
     let mut app = rocket::build();
@@ -157,62 +193,15 @@ async fn rocket() -> _ {
 
     tokio::task::spawn_blocking(move || {
         // this is the write thread and it's just gonna spin forever
-        let interval_us = 1000000;
-        let machine_id = 1;
-        let mut minute_writer = minute::ShardedMinute::new(machine_id, data_directory.to_string());
+        let mut minute_writer = minute::ShardedMinute::new(machine_id, minute_data_directory.to_string());
 
-        loop {
-            // start a timer
-            let now = SystemTime::now();
+        minute_writer.write_loop(services.receiver.clone());
+    });
 
-            // dump the entire receiver
-            let mut event_buffer: Vec<WritableEvent> = Vec::new();
-            let mut n_bytes = 0;
-            while let Ok(event) = services.receiver.try_recv() {
-                n_bytes += event.get_size_in_bytes();
-                event_buffer.push(event);
-            }
-            let n_events = event_buffer.len();
+    tokio::task::spawn_blocking(move || {
+        let minute_reader = services.minute_db.clone();
 
-            // do something with the events
-            match minute_writer.write(event_buffer){
-                Ok(_) => {
-                },
-                Err(e) => {
-                    println!("Error writing events: {}", e);
-                }
-            }
-
-            let mut symbol = "b";
-            if n_bytes > 1024 {
-                n_bytes = n_bytes / 1024;
-                symbol = "Kb";
-            }
-            if n_bytes > 1024 {
-                n_bytes = n_bytes / 1024;
-                symbol = "Mb";
-            }
-            if n_bytes > 1024 {
-                n_bytes = n_bytes / 1024;
-                symbol = "Gb";
-            }
-
-            // how long did that take?
-            let elapsed = now.elapsed().unwrap();
-            let elapsed_us = elapsed.as_micros() as i128;
-            let sleep_us = interval_us - elapsed_us;
-
-            println!("Received {} events ({}{}) in {} us", n_events, n_bytes, symbol, elapsed_us);
-
-            // if we took too long, just skip the sleep
-            if sleep_us < 0 {
-                println!("Warning: write thread took too long: {} us", elapsed_us);
-                continue;
-            }
-            else{
-                std::thread::sleep(std::time::Duration::from_micros(sleep_us as u64));
-            }
-        }
+        minute_reader.read_loop();
     });
 
     app
