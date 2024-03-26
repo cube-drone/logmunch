@@ -122,7 +122,6 @@ impl Minute{
         }
     }
 
-
     pub fn explode(fragments: &mut HashSet<String>, data: &String){
         // this hashset contains every word in the string
         // it also contains every 3-letter fragment of every word
@@ -186,8 +185,8 @@ impl Minute{
         }
 
         let postcard_serialized = postcard::to_allocvec(&gbloom)?;
-        let size_bytes = postcard_serialized.len();
-        println!("Bloom filter size: {} bytes", size_bytes);
+        //let size_bytes = postcard_serialized.len();
+        //println!("Bloom filter size: {} bytes", size_bytes);
 
         let mut statement = self.connection.prepare_cached(INSERT_BLOOM)?;
         let timestamp_micros = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as i64;
@@ -446,11 +445,13 @@ impl ShardedMinute{
             let n_events = event_buffer.len();
 
             // do something with the events
-            match self.write(event_buffer){
-                Ok(_) => {
-                },
-                Err(e) => {
-                    println!("Error writing events: {}", e);
+            if n_events > 0 {
+                match self.write(event_buffer){
+                    Ok(_) => {
+                    },
+                    Err(e) => {
+                        println!("Error writing events: {}", e);
+                    }
                 }
             }
 

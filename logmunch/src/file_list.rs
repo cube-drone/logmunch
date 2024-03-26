@@ -59,7 +59,7 @@ impl FileInfo{
                             }
                             match Self::parse_path(&path){
                                 Ok((day, hour, minute, unique_id)) => {
-                                    println!("{:?} {} {} {} {}", path, day, hour, minute, unique_id);
+                                    // println!("{:?} {} {} {} {}", path, day, hour, minute, unique_id);
                                     let metadata = entry.metadata().unwrap();
                                     let size = metadata.len();
                                     let last_modified = metadata.modified().unwrap().elapsed().unwrap().as_secs();
@@ -167,9 +167,20 @@ fn test_directory_scan(){
 
     prep_test_directory(&test_directory);
 
-    let files = FileInfo::scan_and_clean(&test_directory, 5);
+    let files = FileInfo::scan_and_clean(&test_directory, 5).unwrap();
 
-    for file in files.unwrap(){
+    assert_eq!(files.len(), 3);
+    assert_eq!(files[1].day, 2);
+    assert_eq!(files[1].hour, 3);
+    assert_eq!(files[1].minute, 4);
+    assert_eq!(files[1].unique_id, "borp");
+    assert_eq!(files[2].day, 1);
+    assert_eq!(files[2].hour, 1);
+    assert_eq!(files[2].minute, 1);
+    assert_eq!(files[2].unique_id, "borp");
+
+
+    for file in files{
         println!("{:?}", file);
     }
 }
