@@ -1,4 +1,3 @@
-use std::sync::{Arc, RwLock, Mutex};
 use std::time::SystemTime;
 use std::fs;
 use anyhow::Result;
@@ -8,6 +7,8 @@ use growable_bloom_filter::GrowableBloom;
 use postcard;
 
 use rusqlite::{Connection as SqlConnection, DatabaseName, params, Transaction};
+
+use crate::minute_id::MinuteId;
 
 ///
 /// The Event is the basic unit of data that we store in a minute, it's a _log line_.
@@ -19,42 +20,6 @@ pub struct Log{
     pub message: String,
     pub time: i64,
     pub host: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MinuteId{
-    pub day: u32,
-    pub hour: u32,
-    pub minute: u32,
-    pub unique_id: String,
-}
-
-impl MinuteId{
-    pub fn new(day: u32, hour: u32, minute: u32, unique_id: &str) -> MinuteId {
-        MinuteId{
-            day,
-            hour,
-            minute,
-            unique_id: unique_id.to_string(),
-        }
-    }
-
-    pub fn to_string(&self) -> String {
-        format!("{}-{}-{}-{}", self.day, self.hour, self.minute, self.unique_id)
-    }
-
-    pub fn from_string(s: &str) -> Result<MinuteId> {
-        let split = s.split("-").collect::<Vec<&str>>();
-        let day = split[0].parse::<u32>()?;
-        let hour = split[1].parse::<u32>()?;
-        let minute = split[2].parse::<u32>()?;
-        let unique_id = split[3].to_string();
-        Ok(MinuteId{
-            day,
-            hour,
-            minute,
-            unique_id,
-        })
 }
 
 // Minute isn't intended to be passed around between threads, so it's not Sync, or Send, or nothin'
@@ -308,7 +273,7 @@ impl Minute{
             while let Some(row) = rows.next()? {
                 let host: String = row.get(2)?;
                 let message: String = row.get(1)?;
-                let search_string = format!("{} {}", host, event);
+                let search_string = format!("{} {}", host, message);
                 if search.test(&search_string) {
                     let log_entry = Log{
                         id: row.get(0)?,
@@ -605,22 +570,22 @@ fn test_minute_search() -> Result<()> {
 
     let results = minute.search(&crate::search_token::Search::new(searchterm))?;
     assert!(results.len() > 0);
-    assert!(results[0].event.contains(searchterm));
+    assert!(results[0].message.contains(searchterm));
     assert!(results.len() < 1000);
 
     let searchterm = "presence";
 
     let results = minute.search(&crate::search_token::Search::new(searchterm))?;
     assert!(results.len() > 0);
-    assert!(results[0].event.contains(searchterm));
+    assert!(results[0].message.contains(searchterm));
     assert!(results.len() < 1000);
 
     let searchterm = "presence !homer";
 
     let results = minute.search(&crate::search_token::Search::new(searchterm))?;
     assert!(results.len() > 0);
-    assert!(results[0].event.contains("presence"));
-    assert!(!results[0].event.contains("homer"));
+    assert!(results[0].message.contains("presence"));
+    assert!(!results[0].message.contains("homer"));
     assert!(results.len() < 1000);
 
 

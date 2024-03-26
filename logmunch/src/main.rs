@@ -10,10 +10,11 @@ use crossbeam::channel::{Sender, Receiver};
 use rocket::tokio;
 
 mod minute;
+mod minute_id;
 mod minute_db;
 mod search_token;
 
-mod reader;
+mod file_list;
 
 /*
 POST /services/collector/event/1.0 {}
@@ -142,11 +143,12 @@ async fn rocket() -> _ {
     let (sender, receiver) = unbounded::<WritableEvent>();
 
     let minute_db_bytes = 1024 * 1024 * 1024;
+    let data_directory = "./data/";
 
     let services = Services{
         sender: Arc::new(sender),
         receiver: Arc::new(receiver),
-        minute_db: Arc::new(minute_db::MinuteDB::new(minute_db_bytes)),
+        minute_db: Arc::new(minute_db::MinuteDB::new(minute_db_bytes, data_directory.to_string())),
     };
 
     let mut app = rocket::build();
@@ -157,7 +159,6 @@ async fn rocket() -> _ {
         // this is the write thread and it's just gonna spin forever
         let interval_us = 1000000;
         let machine_id = 1;
-        let data_directory = "./data/";
         let mut minute_writer = minute::ShardedMinute::new(machine_id, data_directory.to_string());
 
         loop {

@@ -1,8 +1,10 @@
 use std::fs;
-use std::time::{SystemTime, Duration};
 use walkdir::WalkDir;
 use std::collections::HashSet;
 use anyhow::Result;
+
+#[allow(unused_imports)] // (used in a test)
+use std::time::{SystemTime, Duration};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileInfo{
@@ -16,14 +18,14 @@ pub struct FileInfo{
     pub unique_id: String,
 }
 
-pub struct Reader{
+pub struct FileList{
     data_directory: String,
     cap_bytes: usize,
 }
 
-impl Reader{
-    pub fn new(data_directory: &str, cap_bytes: usize) -> Reader{
-        Reader{data_directory: data_directory.to_string(), cap_bytes}
+impl FileList{
+    pub fn new(data_directory: &str, cap_bytes: usize) -> FileList{
+        FileList{data_directory: data_directory.to_string(), cap_bytes}
     }
 
     fn parse_path(path: &str) -> Result<(i32, i32, i32, String)>{
@@ -146,7 +148,7 @@ fn test_directory_scan(){
 
     prep_test_directory(&test_directory);
 
-    let reader = Reader::new(&test_directory, 1000);
+    let reader = FileList::new(&test_directory, 1000);
     let files = reader.scan();
 
     for file in files.unwrap(){
