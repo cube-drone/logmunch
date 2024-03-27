@@ -14,17 +14,19 @@ pub struct MinuteDB{
     db: Arc<RwLock<BTreeMap<MinuteId, Arc<Mutex<Minute>>>>>,
     bloom_cache: Arc<RwLock<BTreeMap<MinuteId, Arc<GrowableBloom>>>>,
     data_directory: String,
-    n_minutes: u64,
+    max_minutes: u64,
+    max_disk_bytes: u64,
 }
 
 impl MinuteDB{
-    pub fn new(n_minutes: u64, data_directory: String) -> MinuteDB{
+    pub fn new(data_directory: String, max_minutes: u64, max_disk_bytes: u64) -> MinuteDB{
 
         MinuteDB{
             db: Arc::new(RwLock::new(BTreeMap::new())),
             bloom_cache: Arc::new(RwLock::new(BTreeMap::new())),
-            data_directory: data_directory,
-            n_minutes: n_minutes,
+            data_directory,
+            max_minutes,
+            max_disk_bytes
         }
     }
 
@@ -117,7 +119,7 @@ impl MinuteDB{
             let now = SystemTime::now();
 
             // read from disk and insert into db
-            let files = crate::file_list::FileInfo::scan_and_clean(&self.data_directory, self.n_minutes).unwrap();
+            let files = crate::file_list::FileInfo::scan_and_clean(&self.data_directory, self.max_minutes, self.max_disk_bytes).unwrap();
             let set_of_minutes: HashSet<MinuteId> = files.iter().map(|f| f.to_minute_id()).collect();
             match self.update(set_of_minutes){
                 Ok(_) => {},

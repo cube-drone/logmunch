@@ -160,7 +160,6 @@ pub struct Services{
 }
 
 const ESTIMATED_MINUTE_BLOOM_SIZE_BYTES: u64 = 650000;
-const ESTIMATED_MINUTE_DISK_SIZE_BYTES: u64 = 100000000;
 
 #[launch]
 async fn rocket() -> _ {
@@ -183,27 +182,19 @@ async fn rocket() -> _ {
     let data_directory = std::env::var("DATA_DIRECTORY").unwrap_or("./data/".to_string());
     let minute_data_directory = format!("{}/minutes", data_directory);
     // TODO: make sure the directory exists
-    // TODO: classic_data_directory for storing logs ... in a regular file!
-    let minute_db_n_max_minutes_for_ram = minute_db_bytes / ESTIMATED_MINUTE_BLOOM_SIZE_BYTES;
-    let minute_db_n_max_minutes_for_disk = minute_db_disk_bytes / ESTIMATED_MINUTE_DISK_SIZE_BYTES;
-    let minute_db_n_minutes = std::cmp::min(minute_db_n_max_minutes_for_ram, minute_db_n_max_minutes_for_disk);
+    let minute_db_n_minutes = minute_db_bytes / ESTIMATED_MINUTE_BLOOM_SIZE_BYTES;
 
     let max_write_threads = std::env::var("MAX_WRITE_THREADS").unwrap_or("8".to_string()).parse::<u32>().unwrap();
 
     if minute_db_n_minutes < 5 {
         panic!("Not enough memory or disk space to run this program!");
     }
-    else if minute_db_n_minutes == minute_db_n_max_minutes_for_ram {
-        println!("Booting with {} minutes in memory: increase minute cache length by increasing RAM", minute_db_n_minutes);
-    }
-    else if minute_db_n_minutes == minute_db_n_max_minutes_for_disk {
-        println!("Booting with {} minutes in memory: increase minute cache length by adding disk space", minute_db_n_minutes);
-    }
+    println!("Booting with {} minutes in memory: increase minute cache length by increasing RAM", minute_db_n_minutes);
 
     let services = Services{
         sender: Arc::new(sender),
         receiver: Arc::new(receiver),
-        minute_db: Arc::new(minute_db::MinuteDB::new(minute_db_n_minutes, minute_data_directory.to_string())),
+        minute_db: Arc::new(minute_db::MinuteDB::new(minute_data_directory.to_string(), minute_db_n_minutes, minute_db_disk_bytes)),
     };
 
     let mut app = rocket::build();

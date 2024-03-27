@@ -38,7 +38,7 @@ impl FileInfo{
     ///
     /// Scan the data directory for files, and remove the oldest files if there are more than n_minutes worth of files.
     ///
-    pub fn scan_and_clean(data_directory: &str, n_minutes: u64) -> Result<Vec<FileInfo>>{
+    pub fn scan_and_clean(data_directory: &str, n_minutes: u64, max_bytes: u64) -> Result<Vec<FileInfo>>{
         let mut files = Vec::new();
         let mut unopenable_files = HashSet::new();
 
@@ -99,12 +99,26 @@ impl FileInfo{
         files.sort_by(|a, b| b.sort_key.cmp(&a.sort_key));
 
         // if there are more files than n_minutes, delete the oldest files
+        // the "n_minutes" restriction is set by how many bloom filters we can fit in RAM
         if files.len() > n_minutes as usize {
             let extra_files = files.split_off(n_minutes as usize);
             for file in extra_files{
                 let path = format!("{}{}", data_directory, file.path);
                 Self::remove_file(path.as_str());
             }
+        }
+
+        // if the total size of the files is greater than max_bytes, delete the oldest files
+        // the "max_bytes" restriction is set by how much disk space we can use
+        let mut total_bytes = 0;
+        for file in &files{
+            total_bytes += file.size_bytes;
+        }
+        while total_bytes > max_bytes{
+            let file = files.pop().unwrap();
+            let path = format!("{}{}", data_directory, file.path);
+            Self::remove_file(path.as_str());
+            total_bytes -= file.size_bytes;
         }
 
         /*
