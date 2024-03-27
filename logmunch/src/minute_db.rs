@@ -85,7 +85,7 @@ impl MinuteDB{
         }
         for key in new_list{
             if db.contains_key(&key) == false {
-                let minute = Minute::new(key.day, key.hour, key.minute, &key.unique_id, &self.data_directory)?;
+                let minute = Minute::new(key.day, key.hour, key.minute, &key.unique_id, &self.data_directory, false)?;
                 match minute.is_sealed(){
                     Ok(true) => {},
                     Ok(false) => {

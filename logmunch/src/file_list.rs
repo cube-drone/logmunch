@@ -138,8 +138,8 @@ fn prep_test_directory(data_directory: &str){
     fs::create_dir_all(data_directory).unwrap();
 
     let mut writer = crate::minute::ShardedMinute::new(1, data_directory.to_string(), 1 );
-    let mut other_writer = crate::minute::Minute::new(1, 1, 1, &"borp", &data_directory ).unwrap();
-    let mut other_other_writer = crate::minute::Minute::new(2, 3, 4, &"borp", &data_directory ).unwrap();
+    let mut other_writer = crate::minute::Minute::new(1, 1, 1, &"borp", &data_directory, true ).unwrap();
+    let mut other_other_writer = crate::minute::Minute::new(2, 3, 4, &"borp", &data_directory, true ).unwrap();
 
     let mut test_data_source = crate::minute::TestData::new();
     let mut test_data = Vec::new();

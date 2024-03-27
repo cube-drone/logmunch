@@ -74,7 +74,7 @@ const GET_BLOOM: &str = r#"SELECT bloom FROM bloom ORDER BY id ASC LIMIT 1"#;
 const HAS_BLOOM: &str = r#"SELECT COUNT(*) FROM bloom"#;
 
 impl Minute{
-    pub fn new(day: u32, hour: u32, minute: u32, unique_id: &str, data_directory: &str) -> Result<Self> {
+    pub fn new(day: u32, hour: u32, minute: u32, unique_id: &str, data_directory: &str, write: bool) -> Result<Self> {
 
         let fullpath = format!("{}/{}/{}", data_directory, day, hour);
         let minutepath = format!("{}/{}/{}/{}-{}.db", data_directory, day, hour, minute, unique_id);
@@ -83,12 +83,22 @@ impl Minute{
 
         let connection = SqlConnection::open(minutepath)?;
 
-        // Set the journal mode and synchronous mode: WAL and normal
-        // (WAL is write-ahead logging, which is faster and more reliable than the default rollback journal)
-        // (normal synchronous mode is the best choice for WAL, and is the best tradeoff between speed and reliability)
-        // (we might even need to disable that to JUICE WRITE TIMES, but we'll see how it goes first)
-        connection.pragma_update(Some(DatabaseName::Main), "journal_mode", "WAL")?;
-        connection.pragma_update(Some(DatabaseName::Main), "synchronous", "normal")?;
+        if write {
+            // Set the journal mode and synchronous mode: WAL and normal
+            // (WAL is write-ahead logging, which is faster and more reliable than the default rollback journal)
+            // (normal synchronous mode is the best choice for WAL, and is the best tradeoff between speed and reliability)
+            // (we might even need to disable that to JUICE WRITE TIMES, but we'll see how it goes first)
+            // since we're the only ones writing to the database, we can use exclusive locking: it's a tiny bit faster
+            connection.pragma_update(Some(DatabaseName::Main), "locking_mode", "exclusive")?;
+            connection.pragma_update(Some(DatabaseName::Main), "journal_mode", "WAL")?;
+            connection.pragma_update(Some(DatabaseName::Main), "synchronous", "normal")?;
+        }
+        else{
+            // no WAL mode because we're not allowed to write to the database at all
+            connection.pragma_update(Some(DatabaseName::Main), "journal_mode", "off")?;
+            connection.pragma_update(Some(DatabaseName::Main), "synchronous", "off")?;
+            connection.pragma_update(Some(DatabaseName::Main), "locking_mode", "normal")?;
+        }
 
         Self::execute_and_eat_already_exists_errors(&connection, CREATE_TABLE)?;
         Self::execute_and_eat_already_exists_errors(&connection, CREATE_SEARCH_FRAGMENTS)?;
@@ -362,7 +372,7 @@ impl ShardedMinute{
             let thread = std::thread::spawn(move || {
                 // each writer lives on its own thread
                 let mut minute = Minute::new(
-                    day, hour, minute, &unique_id, &data_directory).unwrap();
+                    day, hour, minute, &unique_id, &data_directory, true).unwrap();
 
                 if split_data.len() > 0 {
                     match minute.write_second(split_data){
@@ -390,6 +400,7 @@ impl ShardedMinute{
     /// (seal any minutes that are in the past: we will never write to them again)
     ///
     pub fn seal(&mut self) -> Result<()> {
+        let mut tickets_to_remove: Vec<WriteTicket> = Vec::new();
         for node in &self.tickets {
             let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs() as u32;
             let day = timestamp / 86400;
@@ -403,9 +414,15 @@ impl ShardedMinute{
                     node.hours,
                     node.minutes,
                     &unique_id,
-                    &self.data_directory).unwrap();
+                    &self.data_directory,
+                    true)?;
                 minute.seal()?;
+                // if that minute is sealed, we don't need to keep the ticket around
+                tickets_to_remove.push(node.clone());
             }
+        }
+        for node in tickets_to_remove {
+            self.tickets.remove(&node);
         }
         Ok(())
     }
@@ -424,7 +441,8 @@ impl ShardedMinute{
                 node.hours,
                 node.minutes,
                 &unique_id,
-                &self.data_directory).unwrap();
+                &self.data_directory,
+                true).unwrap();
             minute.seal()?;
         }
         Ok(())
@@ -598,7 +616,9 @@ fn test_minute_writer() -> Result<()> {
         4,
         6,
         "quick",
-        &test_data_directory("minute_writer"))?;
+        &test_data_directory("minute_writer"),
+        true,
+    )?;
 
     let mut test_data_source = TestData::new();
     let mut test_data = Vec::new();
@@ -620,7 +640,9 @@ fn test_minute_search() -> Result<()> {
         4,
         6,
         "search",
-        &test_data_directory("minute_search"))?;
+        &test_data_directory("minute_search"),
+        true
+    )?;
 
     let mut test_data_source = TestData::new();
     let mut test_data = Vec::new();
@@ -665,7 +687,9 @@ fn test_generated_bloom() -> Result<()> {
         2,
         3,
         "bloom",
-        &test_data_directory("generated_bloom"))?;
+        &test_data_directory("generated_bloom"),
+        true
+    )?;
 
     for _ in 0..5{
         let mut test_data = Vec::new();
