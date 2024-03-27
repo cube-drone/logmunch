@@ -168,8 +168,8 @@ async fn rocket() -> _ {
     let (sender, receiver) = unbounded::<WritableEvent>();
 
     // TODO: these things should be configurable env vars
-    // mathin' it out: 1 day (1440 minutes) should occupy about 270Mb of RAM, and 18Gb of disk
-    //  this is based on the assumption that each minute occupies 1.5Mb of RAM and 100Mb of disk
+    // mathin' it out: 1 day (1440 minutes) should occupy about 270MB of RAM, and .... 144GB of disk
+    //  this is based on the assumption that each minute occupies 1.5MB of RAM and 100MB of disk
     //  and that our ShardedMinuteWriter isn't writing more than one Minute object per minute
     //      (which it starts to do past 3000 lines/s or 180000 lines/m)
     let minute_db_gigabytes_string = std::env::var("MINUTE_DB_RAM_GB").unwrap_or("1.8".to_string());

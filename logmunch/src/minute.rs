@@ -49,9 +49,7 @@ const GET_LOG_BY_BATCH: &str = r#"SELECT id, log, host, host_time FROM log WHERE
 const CREATE_SEARCH_FRAGMENTS: &str = r#"CREATE TABLE IF NOT EXISTS search_fragments (
     id INTEGER PRIMARY KEY,
     batch INTEGER,
-    fragment TEXT,
-    min_log_id INTEGER,
-    max_log_id INTEGER
+    fragment TEXT
 )"#;
 
 const LIST_BATCHES: &str = r#"SELECT DISTINCT batch FROM log"#;
@@ -196,6 +194,10 @@ impl Minute{
     }
 
     pub fn seal(&mut self) -> Result<()>{
+        if self.is_sealed()?{
+            return Ok(());
+        }
+
         // once we seal the minute, we shouldn't write to it anymore
         // (and why would we? it's in the past)
         self.connection.execute(INDEX_TIME, [])?;
