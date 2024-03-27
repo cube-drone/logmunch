@@ -172,9 +172,9 @@ async fn rocket() -> _ {
     //  and that our ShardedMinuteWriter isn't writing more than one Minute object per minute
     //      (which it starts to do past 3000 lines/s or 180000 lines/m)
     let minute_db_gigabytes_string = std::env::var("MINUTE_DB_RAM_GB").unwrap_or("1.8".to_string());
-    let minute_db_disk_gigabytes_string = std::env::var("MINUTE_DB_DISK_GB").unwrap_or("20".to_string());
-    let minute_db_bytes = (minute_db_gigabytes_string.parse::<f64>().unwrap() * 1024.0 * 1024.0 * 1024.0) as u64;
-    let minute_db_disk_bytes = (minute_db_disk_gigabytes_string.parse::<f64>().unwrap() * 1024.0 * 1024.0 * 1024.0) as u64;
+    let minute_db_disk_gigabytes_string = std::env::var("MINUTE_DB_DISK_GB").unwrap_or("30".to_string());
+    let minute_db_bytes = (minute_db_gigabytes_string.parse::<f64>().unwrap() * 1000.0 * 1000.0 * 1000.0) as u64;
+    let minute_db_disk_bytes = (minute_db_disk_gigabytes_string.parse::<f64>().unwrap() * 1000.0 * 1000.0 * 1000.0 * 0.8) as u64;
 
     let machine_id = std::env::var("MACHINE_ID").unwrap_or("1".to_string()).parse::<u32>().unwrap();
 

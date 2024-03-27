@@ -20,6 +20,10 @@ start:
 	docker rm log-mannifer || true
 	docker stop log-dannifer -t 1 || true
 	docker rm log-dannifer || true
+	docker stop log-bonnifer -t 1 || true
+	docker rm log-bonnifer || true
+	docker stop log-winnifer -t 1 || true
+	docker rm log-winnifer || true
 	docker run -d \
 		--network=host \
 		--name=log-jennifer \
@@ -34,7 +38,7 @@ start:
 		--env "HAMS_AHOY=PORKSWINDLE" \
 		--env "HAMS_AHOY2=SWINEFLESH" \
 		--env "LOG_FILE=sample.log" \
-		--env "DELAY_MS=1" \
+		--env "DELAY_MS=0" \
 		--label location=fatlanta \
 		log-gen
 
@@ -52,7 +56,7 @@ start:
 		--env "HAMS_AHOY=PORKSWINDLE" \
 		--env "HAMS_AHOY2=SWINEFLESH" \
 		--env "LOG_FILE=garbage.log" \
-		--env "DELAY_MS=1" \
+		--env "DELAY_MS=0" \
 		--label location=fatlanta \
 		log-gen
 
@@ -70,7 +74,7 @@ start:
 		--env "HAMS_AHOY=PORKSWANDLE" \
 		--env "HAMS_AHOY2=SWOONFLESH" \
 		--env "LOG_FILE=sample.log" \
-		--env "DELAY_MS=1" \
+		--env "DELAY_MS=0" \
 		--label location=fatlanta \
 		log-gen
 
@@ -88,7 +92,7 @@ start:
 		--env "HAMS_AHOY=PORKSWONDLE" \
 		--env "HAMS_AHOY2=BUTTFLESH" \
 		--env "LOG_FILE=sample.log" \
-		--env "DELAY_MS=1" \
+		--env "DELAY_MS=0" \
 		--label location=fatlanta \
 		log-gen
 
@@ -106,7 +110,43 @@ start:
 		--env "HAMS_AHOY=PORKSWONDLE" \
 		--env "HAMS_AHOY2=BUTTFLESH" \
 		--env "LOG_FILE=sample.log" \
-		--env "DELAY_MS=1" \
+		--env "DELAY_MS=0" \
+		--label location=fatlanta \
+		log-gen
+
+	docker run -d \
+		--network=host \
+		--name=log-bonnifer \
+		--log-driver=splunk \
+		--log-opt splunk-token=SPLUNK-TOKEN-GOES-HERE \
+		--log-opt splunk-url=http://host.docker.internal:9283 \
+		--log-opt tag="BONNIFER" \
+		--log-opt splunk-format=raw \
+		--log-opt env=HAMS_AHOY \
+		--log-opt env=HAMS_AHOY2 \
+		--log-opt env=LOG_FILE \
+		--env "HAMS_AHOY=PORKSWONDLE" \
+		--env "HAMS_AHOY2=BUTTFLESH" \
+		--env "LOG_FILE=sample.log" \
+		--env "DELAY_MS=0" \
+		--label location=fatlanta \
+		log-gen
+
+	docker run -d \
+		--network=host \
+		--name=log-winnifer \
+		--log-driver=splunk \
+		--log-opt splunk-token=SPLUNK-TOKEN-GOES-HERE \
+		--log-opt splunk-url=http://host.docker.internal:9283 \
+		--log-opt tag="WINNIFER" \
+		--log-opt splunk-format=raw \
+		--log-opt env=HAMS_AHOY \
+		--log-opt env=HAMS_AHOY2 \
+		--log-opt env=LOG_FILE \
+		--env "HAMS_AHOY=PORKSWONDLE" \
+		--env "HAMS_AHOY2=BUTTFLESH" \
+		--env "LOG_FILE=sample.log" \
+		--env "DELAY_MS=0" \
 		--label location=fatlanta \
 		log-gen
 
@@ -121,3 +161,7 @@ clean:
 	docker rm log-mannifer || true
 	docker stop log-dannifer -t 1 || true
 	docker rm log-dannifer || true
+	docker stop log-bonnifer -t 1 || true
+	docker rm log-bonnifer || true
+	docker stop log-winnifer -t 1 || true
+	docker rm log-winnifer || true
