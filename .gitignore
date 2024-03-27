@@ -4,3 +4,6 @@ sample.log
 target
 test_data
 *.db
+*-shm
+*-wal
+*-journal

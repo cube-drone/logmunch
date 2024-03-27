@@ -309,10 +309,11 @@ pub struct ShardedMinute{
     tickets: HashSet<WriteTicket>,
     machine_id: u32,
     data_directory: String,
+    max_threads: u32,
 }
 
 impl ShardedMinute{
-    pub fn new(machine_id: u32, data_directory: String) -> ShardedMinute {
+    pub fn new(machine_id: u32, data_directory: String, max_threads: u32) -> ShardedMinute {
         /*
             Note: we're storing WriteTickets in RAM, here, which means that if the server crashes, there's a good chance we'll
                 lose tickets and a bunch of minutes will be left unsealed.
@@ -323,11 +324,12 @@ impl ShardedMinute{
             tickets: HashSet::default(),
             machine_id: machine_id,
             data_directory,
+            max_threads,
         }
     }
 
     pub fn write(&mut self, data: Vec<crate::WritableEvent>) -> Result<()> {
-        let n_threads = (data.len() / MAX_WRITE_PER_SECOND_PER_THREAD as usize) + 1;
+        let n_threads = std::cmp::min(self.max_threads as usize,(data.len() / MAX_WRITE_PER_SECOND_PER_THREAD as usize) + 1);
         let mut threads = Vec::new();
         let mut data = data.clone();
 
@@ -697,9 +699,12 @@ fn test_generated_bloom() -> Result<()> {
 
 #[test]
 fn test_sharded_minute() -> Result<()> {
+    let max_threads = 8;
     let mut minute = ShardedMinute::new(
         1,
-        test_data_directory("sharded_minute").to_string());
+        test_data_directory("sharded_minute").to_string(),
+        max_threads
+    );
     let mut test_data_source = TestData::new();
 
     // start a timer

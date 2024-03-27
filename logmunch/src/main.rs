@@ -3,10 +3,12 @@ use std::sync::Arc;
 use rocket::data::Data;
 use rocket::data::ToByteUnit;
 use rocket::State;
+use rocket::serde::json::Json;
 use serde::Deserialize;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::{Sender, Receiver};
 use rocket::tokio;
+use anyhow::Result;
 
 mod minute;
 mod minute_id;
@@ -89,7 +91,7 @@ impl WritableEvent{
 
 
 #[options("/services/collector/event/<version>")]
-fn ingest_options(version: f32) -> &'static str {
+fn ingest_options_endpoint(version: f32) -> &'static str {
     let _version = version;
     "OK"
 }
@@ -102,7 +104,7 @@ async fn do_something(services: &State<Services>, row: &str){
 }
 
 #[post("/services/collector/event/<version>", data="<data>")]
-async fn ingest(services: &State<Services>, data: Data<'_>, version: f32) -> &'static str {
+async fn ingest_endpoint(services: &State<Services>, data: Data<'_>, version: f32) -> &'static str {
 
     let stream = data.open(10.megabytes());
     let str = stream.into_string().await;
@@ -133,6 +135,21 @@ async fn ingest(services: &State<Services>, data: Data<'_>, version: f32) -> &'s
     }
 
     "OK"
+}
+
+#[get("/search/<search>")]
+async fn search_endpoint(services: &State<Services>, search: &str) -> Json<Vec<crate::minute::Log>> {
+    let search = search_token::Search::new(&search);
+
+    let results = match services.minute_db.search_async(search).await{
+        Ok(results) => results,
+        Err(err) => {
+            println!("Error searching: {:?}", err);
+            Vec::new()
+        }
+    };
+
+    Json(results)
 }
 
 #[derive(Clone)]
@@ -171,6 +188,8 @@ async fn rocket() -> _ {
     let minute_db_n_max_minutes_for_disk = minute_db_disk_bytes / ESTIMATED_MINUTE_DISK_SIZE_BYTES;
     let minute_db_n_minutes = std::cmp::min(minute_db_n_max_minutes_for_ram, minute_db_n_max_minutes_for_disk);
 
+    let max_write_threads = std::env::var("MAX_WRITE_THREADS").unwrap_or("2".to_string()).parse::<u32>().unwrap();
+
     if minute_db_n_minutes < 5 {
         panic!("Not enough memory or disk space to run this program!");
     }
@@ -189,11 +208,11 @@ async fn rocket() -> _ {
 
     let mut app = rocket::build();
     app = app.manage(services.clone());
-    app = app.mount("/", routes![ingest_options, ingest]);
+    app = app.mount("/", routes![ingest_options_endpoint, ingest_endpoint, search_endpoint]);
 
     tokio::task::spawn_blocking(move || {
         // this is the write thread and it's just gonna spin forever
-        let mut minute_writer = minute::ShardedMinute::new(machine_id, minute_data_directory.to_string());
+        let mut minute_writer = minute::ShardedMinute::new(machine_id, minute_data_directory.to_string(), max_write_threads);
 
         minute_writer.write_loop(services.receiver.clone());
     });

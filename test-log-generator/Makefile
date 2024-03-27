@@ -30,7 +30,7 @@ start:
 		--env "HAMS_AHOY=PORKSWINDLE" \
 		--env "HAMS_AHOY2=SWINEFLESH" \
 		--env "LOG_FILE=sample.log" \
-		--env "DELAY_MS=1" \
+		--env "DELAY_MS=2" \
 		--label location=fatlanta \
 		log-gen
 
@@ -48,7 +48,7 @@ start:
 		--env "HAMS_AHOY=PORKSWINDLE" \
 		--env "HAMS_AHOY2=SWINEFLESH" \
 		--env "LOG_FILE=garbage.log" \
-		--env "DELAY_MS=1" \
+		--env "DELAY_MS=2" \
 		--label location=fatlanta \
 		log-gen
 
@@ -66,7 +66,7 @@ start:
 		--env "HAMS_AHOY=PORKSWINDLE" \
 		--env "HAMS_AHOY2=SWINEFLESH" \
 		--env "LOG_FILE=sample.log" \
-		--env "DELAY_MS=1" \
+		--env "DELAY_MS=2" \
 		--label location=fatlanta \
 		log-gen
 

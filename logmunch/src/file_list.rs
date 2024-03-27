@@ -31,10 +31,13 @@ impl FileInfo{
         let minute_and_unique_id = split[3].replace(".db", "");
         let split = minute_and_unique_id.split("-").collect::<Vec<&str>>();
         let minute = split[0].parse::<i32>()?;
-        let unique_id = split[1].to_string();
+        let unique_id = split[1..].join("-");
         Ok((day, hour, minute, unique_id))
     }
 
+    ///
+    /// Scan the data directory for files, and remove the oldest files if there are more than n_minutes worth of files.
+    ///
     pub fn scan_and_clean(data_directory: &str, n_minutes: u64) -> Result<Vec<FileInfo>>{
         let mut files = Vec::new();
         let mut unopenable_files = HashSet::new();
@@ -49,10 +52,11 @@ impl FileInfo{
                     match path{
                         Some(path) => {
                             let path = path.replace(data_directory, "");
-                            if path.contains(".swp") || path.contains(".wal") {
+                            if path.contains("-shm") || path.contains("-wal") || path.contains("-journal") {
                                 // a file that is currently being written to by another process
                                 // (do not open)
                                 unopenable_files.insert(path.replace(".swp", "").replace(".wal", ""));
+                                continue;
                             }
                             if unopenable_files.contains(path.replace(".db", "").as_str()){
                                 continue;
@@ -103,7 +107,12 @@ impl FileInfo{
             }
         }
 
-        // scan the data directory recursively and return a list of files as well as their sizes
+        /*
+        // this line can be used to print out the files that were found, useful for debuggin'
+        for file in &files{
+            println!("{:?}", file);
+        }
+         */
         Ok(files)
     }
 
@@ -128,7 +137,7 @@ fn prep_test_directory(data_directory: &str){
     let _ = fs::remove_dir_all(data_directory);
     fs::create_dir_all(data_directory).unwrap();
 
-    let mut writer = crate::minute::ShardedMinute::new(1, data_directory.to_string() );
+    let mut writer = crate::minute::ShardedMinute::new(1, data_directory.to_string(), 1 );
     let mut other_writer = crate::minute::Minute::new(1, 1, 1, &"borp", &data_directory ).unwrap();
     let mut other_other_writer = crate::minute::Minute::new(2, 3, 4, &"borp", &data_directory ).unwrap();
 
@@ -178,9 +187,4 @@ fn test_directory_scan(){
     assert_eq!(files[2].hour, 1);
     assert_eq!(files[2].minute, 1);
     assert_eq!(files[2].unique_id, "borp");
-
-
-    for file in files{
-        println!("{:?}", file);
-    }
 }
