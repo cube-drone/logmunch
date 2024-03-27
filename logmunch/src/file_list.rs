@@ -190,7 +190,7 @@ fn test_directory_scan(){
 
     prep_test_directory(&test_directory);
 
-    let files = FileInfo::scan_and_clean(&test_directory, 5).unwrap();
+    let files = FileInfo::scan_and_clean(&test_directory, 5, 10000000).unwrap();
 
     assert_eq!(files.len(), 3);
     assert_eq!(files[1].day, 2);
