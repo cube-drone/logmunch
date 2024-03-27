@@ -159,7 +159,7 @@ pub struct Services{
     minute_db: Arc<minute_db::MinuteDB>,
 }
 
-const ESTIMATED_MINUTE_BLOOM_SIZE_BYTES: u64 = 1500000;
+const ESTIMATED_MINUTE_BLOOM_SIZE_BYTES: u64 = 650000;
 const ESTIMATED_MINUTE_DISK_SIZE_BYTES: u64 = 100000000;
 
 #[launch]
@@ -188,7 +188,7 @@ async fn rocket() -> _ {
     let minute_db_n_max_minutes_for_disk = minute_db_disk_bytes / ESTIMATED_MINUTE_DISK_SIZE_BYTES;
     let minute_db_n_minutes = std::cmp::min(minute_db_n_max_minutes_for_ram, minute_db_n_max_minutes_for_disk);
 
-    let max_write_threads = std::env::var("MAX_WRITE_THREADS").unwrap_or("2".to_string()).parse::<u32>().unwrap();
+    let max_write_threads = std::env::var("MAX_WRITE_THREADS").unwrap_or("8".to_string()).parse::<u32>().unwrap();
 
     if minute_db_n_minutes < 5 {
         panic!("Not enough memory or disk space to run this program!");

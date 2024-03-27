@@ -7,6 +7,7 @@ use fxhash::FxHashSet as HashSet;
 use growable_bloom_filter::GrowableBloom;
 use postcard;
 use crossbeam::channel::Receiver;
+use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 
 use rusqlite::{Connection as SqlConnection, DatabaseName, params, Transaction};
 
@@ -33,7 +34,7 @@ pub struct Minute{
 const CREATE_TABLE: &str = r#"CREATE TABLE IF NOT EXISTS log (
     id INTEGER PRIMARY KEY,
     batch INTEGER,
-    log TEXT NOT NULL,
+    log BLOB NOT NULL,
     host TEXT NOT NULL,
     host_time INTEGER NOT NULL
 )"#;
@@ -163,7 +164,8 @@ impl Minute{
             let id = (timestamp * 1000000) + sequence as i64;
             sequence += 1;
 
-            statement.execute(params![id, batch, event.event, event.host, event.time])?;
+            let logentry_compressed = compress_prepend_size(event.event.as_bytes());
+            statement.execute(params![id, batch, logentry_compressed, event.host, event.time])?;
         }
         // remove the empty string, nobody wants that
         //fragments.remove("");
@@ -185,7 +187,7 @@ impl Minute{
 
     pub fn generate_bloom_filter(&mut self) -> Result<()> {
         let mut statement = self.connection.prepare_cached(GET_FRAGMENTS)?;
-        let mut gbloom = GrowableBloom::new(0.01, 1000000);
+        let mut gbloom = GrowableBloom::new(0.01, 500000);
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
             let fragment: String = row.get(0)?;
@@ -285,12 +287,15 @@ impl Minute{
             let mut rows = statement.query(params![batch_id])?;
             while let Some(row) = rows.next()? {
                 let host: String = row.get(2)?;
-                let message: String = row.get(1)?;
-                let search_string = format!("{} {}", host, message);
+                //let message_string = row.get(1)?;
+                let message_compressed: Vec<u8> = row.get(1)?;
+                let message = decompress_size_prepended(&message_compressed).map_err(|e| anyhow::anyhow!("Error decompressing message: {}", e))?;
+                let message_string = String::from_utf8(message)?;
+                let search_string = format!("{} {}", host, message_string);
                 if search.test(&search_string) {
                     let log_entry = Log{
                         id: row.get(0)?,
-                        message: message,
+                        message: message_string,
                         host: host,
                         time: row.get(3)?,
                     };

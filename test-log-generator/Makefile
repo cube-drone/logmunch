@@ -16,6 +16,10 @@ start:
 	docker rm log-bennifer || true
 	docker stop log-tynnifer -t 1 || true
 	docker rm log-tynnifer || true
+	docker stop log-mannifer -t 1 || true
+	docker rm log-mannifer || true
+	docker stop log-dannifer -t 1 || true
+	docker rm log-dannifer || true
 	docker run -d \
 		--network=host \
 		--name=log-jennifer \
@@ -63,8 +67,44 @@ start:
 		--log-opt env=HAMS_AHOY \
 		--log-opt env=HAMS_AHOY2 \
 		--log-opt env=LOG_FILE \
-		--env "HAMS_AHOY=PORKSWINDLE" \
-		--env "HAMS_AHOY2=SWINEFLESH" \
+		--env "HAMS_AHOY=PORKSWANDLE" \
+		--env "HAMS_AHOY2=SWOONFLESH" \
+		--env "LOG_FILE=sample.log" \
+		--env "DELAY_MS=1" \
+		--label location=fatlanta \
+		log-gen
+
+	docker run -d \
+		--network=host \
+		--name=log-mannifer \
+		--log-driver=splunk \
+		--log-opt splunk-token=SPLUNK-TOKEN-GOES-HERE \
+		--log-opt splunk-url=http://host.docker.internal:9283 \
+		--log-opt tag="MANNIFER" \
+		--log-opt splunk-format=raw \
+		--log-opt env=HAMS_AHOY \
+		--log-opt env=HAMS_AHOY2 \
+		--log-opt env=LOG_FILE \
+		--env "HAMS_AHOY=PORKSWONDLE" \
+		--env "HAMS_AHOY2=BUTTFLESH" \
+		--env "LOG_FILE=sample.log" \
+		--env "DELAY_MS=1" \
+		--label location=fatlanta \
+		log-gen
+
+	docker run -d \
+		--network=host \
+		--name=log-dannifer \
+		--log-driver=splunk \
+		--log-opt splunk-token=SPLUNK-TOKEN-GOES-HERE \
+		--log-opt splunk-url=http://host.docker.internal:9283 \
+		--log-opt tag="DANNIFER" \
+		--log-opt splunk-format=raw \
+		--log-opt env=HAMS_AHOY \
+		--log-opt env=HAMS_AHOY2 \
+		--log-opt env=LOG_FILE \
+		--env "HAMS_AHOY=PORKSWONDLE" \
+		--env "HAMS_AHOY2=BUTTFLESH" \
 		--env "LOG_FILE=sample.log" \
 		--env "DELAY_MS=1" \
 		--label location=fatlanta \
@@ -77,3 +117,7 @@ clean:
 	docker rm log-bennifer || true
 	docker stop log-tynnifer -t 1 || true
 	docker rm log-tynnifer || true
+	docker stop log-mannifer -t 1 || true
+	docker rm log-mannifer || true
+	docker stop log-dannifer -t 1 || true
+	docker rm log-dannifer || true
